@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.pnpm-store/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.copernicus_token
+
+# Caches / generated data (keep small fixtures, ignore heavy downloads)
+services/api/.cache/
+data/cache/
+data/dem/*.tif
+data/dem/*.tiff
+!data/dem/.gitkeep
+data/currents/*.nc
+data/forecast/*.nc
+data/forecast/*.zarr/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
