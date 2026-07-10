@@ -1,7 +1,14 @@
 // Thin typed client for the FastAPI backend. The frontend only ever exchanges
 // JSON — it never parses GRIB/NetCDF or runs WindNinja.
 
-import type { ModelPreset, RouteRequest, RouteResponse } from "./types";
+import type { BoatConfig, ModelPreset, PolarCurve, RouteRequest, RouteResponse } from "./types";
+
+export interface BoatResponse {
+  boat: BoatConfig;
+  polar_id: string;
+  tws_axis: number[];
+  twa_axis: number[];
+}
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
@@ -26,6 +33,16 @@ export const api = {
     req<{ lat: number; lon: number; elevation_m: number | null }>(
       `/elevation?lat=${lat}&lon=${lon}`,
     ),
+  sampleBoat: () => req<BoatResponse>("/boat/sample"),
+  polarCurve: (polarId: string) => req<PolarCurve>(`/boat/polar/${polarId}`),
+  uploadBoat: async (file: File, config: Partial<BoatConfig>): Promise<BoatResponse> => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("config", JSON.stringify(config));
+    const res = await fetch(`${API_BASE}/boat`, { method: "POST", body: form });
+    if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text()}`);
+    return res.json() as Promise<BoatResponse>;
+  },
 };
 
 export { API_BASE };

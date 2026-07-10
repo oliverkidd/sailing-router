@@ -82,3 +82,11 @@ export interface RouteResponse {
   routes: ModelRoute[];
   warnings: string[];
 }
+
+export interface PolarCurve {
+  polar_id: string;
+  tws_axis: number[];
+  twa_axis: number[];
+  speed: number[][];
+  vmg_targets: Record<string, { upwind: number; downwind: number }>;
+}

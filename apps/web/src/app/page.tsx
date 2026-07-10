@@ -2,15 +2,29 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import BoatConfigPanel from "@/components/BoatConfigPanel";
 import { api } from "@/lib/api";
-import type { ModelPreset } from "@/lib/types";
+import type { BoatConfig, ModelPreset } from "@/lib/types";
 
 // MapLibre must be client-only (accesses window/WebGL).
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
+const INITIAL_BOAT: BoatConfig = {
+  polar_id: "",
+  tack_penalty_s: 30,
+  gybe_penalty_s: 20,
+  upwind_twa_deg: null,
+  downwind_twa_deg: null,
+  leeway_coeff: 0,
+  leeway_max_deg: 8,
+  current_drift_factor: 1,
+  polar_efficiency: 1,
+};
+
 export default function Home() {
   const [apiUp, setApiUp] = useState<boolean | null>(null);
   const [models, setModels] = useState<ModelPreset[]>([]);
+  const [boat, setBoat] = useState<BoatConfig>(INITIAL_BOAT);
 
   useEffect(() => {
     api
@@ -38,7 +52,7 @@ export default function Home() {
 
         <div className="rail-section">
           <h2>Boat</h2>
-          <div style={{ color: "var(--muted)" }}>Upload polar + tune BoatConfig. (M1)</div>
+          <BoatConfigPanel config={boat} onConfigChange={setBoat} />
         </div>
 
         <div className="rail-section">
