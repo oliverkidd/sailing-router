@@ -78,9 +78,11 @@ function maneuverPoints(routes: ModelRoute[]): GeoJSON.FeatureCollection {
 export default function MapView({
   routes = [],
   course,
+  showCurrents = false,
 }: {
   routes?: ModelRoute[];
   course?: Course | null;
+  showCurrents?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -88,8 +90,10 @@ export default function MapView({
   const syncRef = useRef<(() => void) | null>(null);
   const routesRef = useRef<ModelRoute[]>(routes);
   const courseRef = useRef<Course | null | undefined>(course);
+  const showCurrentsRef = useRef<boolean>(showCurrents);
   routesRef.current = routes;
   courseRef.current = course;
+  showCurrentsRef.current = showCurrents;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -140,6 +144,16 @@ export default function MapView({
           "circle-color": ["get", "color"],
           "circle-stroke-color": "#0b1220",
           "circle-stroke-width": 1,
+        },
+      });
+      map.addSource("currents", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({
+        id: "currents",
+        source: "currents",
+        type: "line",
+        paint: {
+          "line-color": ["interpolate", ["linear"], ["get", "rate_kn"], 0, "#93c5fd", 2, "#2563eb"],
+          "line-width": 1.5,
         },
       });
       map.addSource("course", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -213,6 +227,30 @@ export default function MapView({
         type: "FeatureCollection",
         features: courseFeatures,
       });
+
+      // Current arrows over the course bbox (advisory), when enabled.
+      const cs = m.getSource("currents") as maplibregl.GeoJSONSource | undefined;
+      if (cs) {
+        if (showCurrentsRef.current && course) {
+          const pts = [course.start, course.finish, ...course.marks.map((mk) => mk.position)];
+          const lats = pts.map((p) => p[0]);
+          const lons = pts.map((p) => p[1]);
+          const q = new URLSearchParams({
+            lat_min: String(Math.min(...lats) - 0.3),
+            lon_min: String(Math.min(...lons) - 0.3),
+            lat_max: String(Math.max(...lats) + 0.3),
+            lon_max: String(Math.max(...lons) + 0.3),
+            t_utc: course.depart_utc,
+            source: "fes",
+          });
+          fetch(`${API_BASE}/currents/arrows?${q}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => data && cs.setData(data))
+            .catch(() => {});
+        } else {
+          cs.setData({ type: "FeatureCollection", features: [] });
+        }
+      }
     }
 
     syncRef.current = syncData;
@@ -225,10 +263,10 @@ export default function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-sync route/course sources whenever they change.
+  // Re-sync route/course/current sources whenever they change.
   useEffect(() => {
     syncRef.current?.();
-  }, [routes, course]);
+  }, [routes, course, showCurrents]);
 
   return <div id="map" ref={containerRef} />;
 }

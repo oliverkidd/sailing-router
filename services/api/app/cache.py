@@ -10,7 +10,7 @@ import hashlib
 from pathlib import Path
 
 from .config import CACHE_DIR
-from .metocean import WindField
+from .metocean import CurrentField, WindField
 from .schemas import BBox
 
 _WIND_DIR = CACHE_DIR / "forecast"
@@ -47,9 +47,25 @@ def load_wind(key: str) -> WindField:
     return WindField.load_npz(path)
 
 
+def current_key(source: str, bbox: BBox, window_start: str) -> str:
+    return f"{source}__{_bbox_hash(bbox)}__{window_start}"
+
+
 def current_path(key: str) -> Path:
     return _CURRENT_DIR / f"{key}.npz"
 
 
 def has_current(key: str) -> bool:
     return current_path(key).exists()
+
+
+def save_current(key: str, field: CurrentField) -> str:
+    field.save_npz(current_path(key))
+    return key
+
+
+def load_current(key: str) -> CurrentField:
+    path = current_path(key)
+    if not path.exists():
+        raise KeyError(f"No cached CurrentField for key {key}")
+    return CurrentField.load_npz(path)

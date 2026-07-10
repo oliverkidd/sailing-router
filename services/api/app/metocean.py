@@ -127,3 +127,66 @@ class WindField:
             u10=u.astype(float),
             v10=v.astype(float),
         )
+
+
+@dataclass
+class CurrentField:
+    """Surface current on a regular (time, lat, lon) grid, vars u,v in m/s.
+
+    Convention: (u, v) is the vector the current flows TOWARD (east, north). The
+    router's `current_at` returns (u, v) m/s; `set_rate_at` returns the compass
+    "set" (direction toward) and rate in knots. Outside the grid/window the current
+    is treated as zero (calm), never None — currents only shift timing, they don't
+    exhaust a route.
+    """
+
+    source: str
+    times: np.ndarray
+    lats: np.ndarray
+    lons: np.ndarray
+    u: np.ndarray  # (nt, nlat, nlon) m/s toward-east
+    v: np.ndarray  # (nt, nlat, nlon) m/s toward-north
+
+    def _bilinear(self, arr2d: np.ndarray, lat: float, lon: float) -> float:
+        la = float(np.clip(lat, self.lats[0], self.lats[-1]))
+        lo = float(np.clip(lon, self.lons[0], self.lons[-1]))
+        i = int(np.clip(np.searchsorted(self.lats, la) - 1, 0, self.lats.size - 2))
+        j = int(np.clip(np.searchsorted(self.lons, lo) - 1, 0, self.lons.size - 2))
+        la0, la1 = self.lats[i], self.lats[i + 1]
+        lo0, lo1 = self.lons[j], self.lons[j + 1]
+        fy = 0.0 if la1 == la0 else (la - la0) / (la1 - la0)
+        fx = 0.0 if lo1 == lo0 else (lo - lo0) / (lo1 - lo0)
+        v0 = arr2d[i, j] * (1 - fx) + arr2d[i, j + 1] * fx
+        v1 = arr2d[i + 1, j] * (1 - fx) + arr2d[i + 1, j + 1] * fx
+        return float(v0 * (1 - fy) + v1 * fy)
+
+    def current_at(self, lat: float, lon: float, t: datetime) -> tuple[float, float]:
+        """Return (u, v) surface current m/s. Zero outside grid extent / time window."""
+        if lat < self.lats[0] or lat > self.lats[-1] or lon < self.lons[0] or lon > self.lons[-1]:
+            return 0.0, 0.0
+        te = _to_epoch(t)
+        if te < self.times[0] or te > self.times[-1]:
+            return 0.0, 0.0
+        k = int(np.clip(np.searchsorted(self.times, te) - 1, 0, self.times.size - 2))
+        t0, t1 = self.times[k], self.times[k + 1]
+        ft = 0.0 if t1 == t0 else (te - t0) / (t1 - t0)
+        u = self._bilinear(self.u[k], lat, lon) * (1 - ft) + self._bilinear(self.u[k + 1], lat, lon) * ft
+        v = self._bilinear(self.v[k], lat, lon) * (1 - ft) + self._bilinear(self.v[k + 1], lat, lon) * ft
+        return u, v
+
+    def save_npz(self, path) -> None:
+        np.savez_compressed(
+            path, source=self.source, times=self.times, lats=self.lats, lons=self.lons, u=self.u, v=self.v
+        )
+
+    @classmethod
+    def load_npz(cls, path) -> CurrentField:
+        z = np.load(path, allow_pickle=True)
+        return cls(
+            source=str(z["source"]),
+            times=z["times"],
+            lats=z["lats"],
+            lons=z["lons"],
+            u=z["u"],
+            v=z["v"],
+        )

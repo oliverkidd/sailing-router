@@ -8,14 +8,17 @@ warning so the rest of the request still returns.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter
 
 from .. import cache, store
 from ..boat import Boat
 from ..config import MODEL_PRESETS_BY_ID
+from ..currents import get_current_provider
 from ..forecast import get_provider
 from ..geo import context_for_course, course_bbox
-from ..metocean import WindField
+from ..metocean import CurrentField, WindField
 from ..router import IsochroneRouter, RouterParams
 from ..schemas import ModelRoute, RouteRequest, RouteResponse
 
@@ -48,6 +51,28 @@ def _load_or_fetch_wind(model_id: str, req: RouteRequest, warnings: list[str]) -
         return None
 
 
+def _load_or_fetch_current(req: RouteRequest, warnings: list[str]) -> CurrentField | None:
+    bbox = course_bbox(req.course)
+    start = req.course.depart_utc
+    end = start + timedelta(hours=120)
+    # Prefer a cached Copernicus SMOC field, else cached FES, else fetch (FES offline).
+    for source in ("copernicus-smoc", "fes"):
+        key = cache.current_key(source, bbox, start.isoformat())
+        if cache.has_current(key):
+            return cache.load_current(key)
+    for source in ("copernicus-smoc", "fes"):
+        try:
+            field = get_current_provider(source).fetch(bbox, start, end)
+            cache.save_current(cache.current_key(source, bbox, start.isoformat()), field)
+            if source != "copernicus-smoc":
+                warnings.append("currents: Copernicus unavailable, using FES offline tides")
+            return field
+        except Exception:  # noqa: BLE001
+            continue
+    warnings.append("currents: no source available; routing without currents")
+    return None
+
+
 @router.post("/route", response_model=RouteResponse)
 def compute_route(req: RouteRequest) -> RouteResponse:
     warnings: list[str] = []
@@ -65,19 +90,21 @@ def compute_route(req: RouteRequest) -> RouteResponse:
         heading_step_deg=req.heading_step_deg,
     )
 
+    current = _load_or_fetch_current(req, warnings) if req.use_currents else None
+
     routes: list[ModelRoute] = []
     for model_id in req.model_ids:
         wind = _load_or_fetch_wind(model_id, req, warnings)
         if wind is None:
             continue
-        # Currents wired in M5; terrain wind in M6.
+        # Terrain wind wired in M6.
         engine = IsochroneRouter(
             boat=boat,
             wind=wind,
             geo=geo,
-            current=None,
+            current=current,
             params=params,
-            use_currents=False,
+            use_currents=req.use_currents,
         )
         routes.append(engine.route(req.course, model_id))
 

@@ -46,6 +46,8 @@ export default function Home() {
   const [routes, setRoutes] = useState<ModelRoute[]>([]);
   const [running, setRunning] = useState(false);
   const [runMsg, setRunMsg] = useState<string>("");
+  const [useCurrents, setUseCurrents] = useState(false);
+  const [useTerrain, setUseTerrain] = useState(false);
 
   const runRoute = async (modelIds: string[]) => {
     if (!boat.polar_id) {
@@ -59,8 +61,8 @@ export default function Home() {
         course,
         boat,
         model_ids: modelIds,
-        use_terrain_wind: false,
-        use_currents: false,
+        use_terrain_wind: useTerrain,
+        use_currents: useCurrents,
         time_step_s: 300,
         heading_step_deg: 7.5,
       });
@@ -119,6 +121,14 @@ export default function Home() {
               ))}
             </ul>
           )}
+          <div style={{ display: "flex", gap: 12, margin: "8px 0", fontSize: 12 }}>
+            <label style={{ color: "var(--muted)", cursor: "pointer" }}>
+              <input type="checkbox" checked={useCurrents} onChange={(e) => setUseCurrents(e.target.checked)} /> Currents
+            </label>
+            <label style={{ color: "var(--muted)", cursor: "pointer" }}>
+              <input type="checkbox" checked={useTerrain} onChange={(e) => setUseTerrain(e.target.checked)} /> Terrain wind
+            </label>
+          </div>
           <button
             onClick={() => runRoute(["ecmwf"])}
             disabled={running}
@@ -149,7 +159,7 @@ export default function Home() {
       </aside>
 
       <div className="map-area">
-        <MapView routes={routes} course={course} />
+        <MapView routes={routes} course={course} showCurrents={useCurrents} />
       </div>
 
       <div className="compare-bar">
