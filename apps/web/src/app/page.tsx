@@ -3,6 +3,8 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import BoatConfigPanel from "@/components/BoatConfigPanel";
+import CompareBar from "@/components/CompareBar";
+import ModelPicker from "@/components/ModelPicker";
 import RouteTable from "@/components/RouteTable";
 import { api } from "@/lib/api";
 import type { BoatConfig, Course, ModelPreset, ModelRoute } from "@/lib/types";
@@ -48,6 +50,15 @@ export default function Home() {
   const [runMsg, setRunMsg] = useState<string>("");
   const [useCurrents, setUseCurrents] = useState(false);
   const [useTerrain, setUseTerrain] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set(["ecmwf"]));
+
+  const toggleModel = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const runRoute = async (modelIds: string[]) => {
     if (!boat.polar_id) {
@@ -108,44 +119,17 @@ export default function Home() {
 
         <div className="rail-section">
           <h2>Models</h2>
-          {models.length === 0 ? (
-            <div style={{ color: "var(--muted)" }}>No models loaded.</div>
-          ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {models.map((m) => (
-                <li key={m.id} style={{ padding: "3px 0" }}>
-                  <span className="swatch" style={{ background: m.color }} />
-                  {m.label}
-                  <span style={{ color: "var(--muted)" }}> · {m.resolution_deg}°</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div style={{ display: "flex", gap: 12, margin: "8px 0", fontSize: 12 }}>
-            <label style={{ color: "var(--muted)", cursor: "pointer" }}>
-              <input type="checkbox" checked={useCurrents} onChange={(e) => setUseCurrents(e.target.checked)} /> Currents
-            </label>
-            <label style={{ color: "var(--muted)", cursor: "pointer" }}>
-              <input type="checkbox" checked={useTerrain} onChange={(e) => setUseTerrain(e.target.checked)} /> Terrain wind
-            </label>
-          </div>
-          <button
-            onClick={() => runRoute(["ecmwf"])}
-            disabled={running}
-            style={{
-              width: "100%",
-              marginTop: 8,
-              background: running ? "var(--panel-2)" : "var(--accent)",
-              color: running ? "var(--muted)" : "#04231f",
-              border: "none",
-              borderRadius: 6,
-              padding: "6px 8px",
-              fontWeight: 600,
-              cursor: running ? "default" : "pointer",
-            }}
-          >
-            {running ? "Routing…" : "Run route (ECMWF)"}
-          </button>
+          <ModelPicker
+            models={models}
+            selected={selected}
+            onToggle={toggleModel}
+            useCurrents={useCurrents}
+            useTerrain={useTerrain}
+            onCurrents={setUseCurrents}
+            onTerrain={setUseTerrain}
+            onRun={() => runRoute(Array.from(selected))}
+            running={running}
+          />
           {runMsg && <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 6 }}>{runMsg}</div>}
         </div>
 
@@ -163,27 +147,13 @@ export default function Home() {
       </div>
 
       <div className="compare-bar">
-        <span>
+        <span style={{ flexShrink: 0 }}>
           <span className={`status-dot ${apiUp ? "ok" : "down"}`} />
           API {apiUp === null ? "…" : apiUp ? "connected" : "offline"}
         </span>
-        <span>·</span>
-        {routes.length === 0 ? (
-          <span>Select models and run to compare routes.</span>
-        ) : (
-          routes.map((r) => (
-            <span key={r.model_id}>
-              <span className="swatch" style={{ background: modelColor(models, r.model_id) }} />
-              {r.model_id}: {Math.round(r.elapsed_s / 3600)} h · {r.distance_nm} nm · {r.n_tacks}T/
-              {r.n_gybes}G
-            </span>
-          ))
-        )}
+        <span style={{ flexShrink: 0 }}>·</span>
+        <CompareBar routes={routes} />
       </div>
     </div>
   );
-}
-
-function modelColor(models: ModelPreset[], id: string): string {
-  return models.find((m) => m.id === id)?.color ?? "#2dd4bf";
 }
