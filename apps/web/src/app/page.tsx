@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import BoatConfigPanel from "@/components/BoatConfigPanel";
 import CompareBar from "@/components/CompareBar";
+import CourseEditor, { type EditMode } from "@/components/CourseEditor";
 import ModelPicker from "@/components/ModelPicker";
 import RouteTable from "@/components/RouteTable";
 import { api } from "@/lib/api";
@@ -44,8 +45,20 @@ export default function Home() {
   const [apiUp, setApiUp] = useState<boolean | null>(null);
   const [models, setModels] = useState<ModelPreset[]>([]);
   const [boat, setBoat] = useState<BoatConfig>(INITIAL_BOAT);
-  const [course] = useState<Course>(DEFAULT_COURSE);
+  const [course, setCourse] = useState<Course>(DEFAULT_COURSE);
+  const [editMode, setEditMode] = useState<EditMode>("none");
   const [routes, setRoutes] = useState<ModelRoute[]>([]);
+
+  const handleMapClick = (lat: number, lon: number) => {
+    if (editMode === "none") return;
+    if (editMode === "start") setCourse((c) => ({ ...c, start: [lat, lon] }));
+    else if (editMode === "finish") setCourse((c) => ({ ...c, finish: [lat, lon] }));
+    else if (editMode === "mark")
+      setCourse((c) => ({
+        ...c,
+        marks: [...c.marks, { position: [lat, lon], radius_nm: 0.3, rounding: "either", name: `M${c.marks.length + 1}` }],
+      }));
+  };
   const [running, setRunning] = useState(false);
   const [runMsg, setRunMsg] = useState<string>("");
   const [useCurrents, setUseCurrents] = useState(false);
@@ -103,13 +116,16 @@ export default function Home() {
     <div id="app-shell">
       <aside className="rail">
         <h1>Sailing Weather Router</h1>
-        <div className="subtitle">UK + Mediterranean · local-first</div>
+        <div className="subtitle">UK + Mediterranean · local-first · advisory only</div>
 
         <div className="rail-section">
           <h2>Course</h2>
-          <div style={{ color: "var(--muted)" }}>
-            Course editor — draw start, finish, marks, exclusions. (M8)
-          </div>
+          <CourseEditor
+            course={course}
+            onCourseChange={setCourse}
+            editMode={editMode}
+            onEditMode={setEditMode}
+          />
         </div>
 
         <div className="rail-section">
@@ -143,7 +159,12 @@ export default function Home() {
       </aside>
 
       <div className="map-area">
-        <MapView routes={routes} course={course} showCurrents={useCurrents} />
+        <MapView
+          routes={routes}
+          course={course}
+          showCurrents={useCurrents}
+          onMapClick={editMode === "none" ? undefined : handleMapClick}
+        />
       </div>
 
       <div className="compare-bar">

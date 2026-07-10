@@ -47,6 +47,18 @@ body {
   font-size: 16px;
   margin: 0 0 4px;
   letter-spacing: 0.2px;
+  background: linear-gradient(90deg, #2dd4bf, #60a5fa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
 .rail .subtitle {

@@ -1,0 +1,17 @@
+{
+  "name": "Aegean 600 (simplified)",
+  "region": "Aegean, Greece",
+  "note": "Simplified rounding marks for planning demo; not the official course.",
+  "start": [37.44, 23.95],
+  "finish": [37.44, 23.95],
+  "marks": [
+    { "position": [36.39, 25.43], "radius_nm": 0.5, "rounding": "either", "name": "Santorini" },
+    { "position": [35.34, 26.99], "radius_nm": 0.5, "rounding": "either", "name": "Kasos" },
+    { "position": [36.55, 27.15], "radius_nm": 0.5, "rounding": "either", "name": "Kos" },
+    { "position": [37.10, 26.85], "radius_nm": 0.5, "rounding": "either", "name": "Agathonisi" },
+    { "position": [37.61, 24.07], "radius_nm": 0.5, "rounding": "either", "name": "Kea" }
+  ],
+  "exclusions": [],
+  "depart_utc": "2026-07-10T10:00:00Z",
+  "min_depth_m": 3.0
+}

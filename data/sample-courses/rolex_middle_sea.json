@@ -1,0 +1,17 @@
+{
+  "name": "Rolex Middle Sea Race (simplified)",
+  "region": "Central Mediterranean",
+  "note": "Simplified rounding marks for planning demo; not the official course.",
+  "start": [35.90, 14.52],
+  "finish": [35.90, 14.52],
+  "marks": [
+    { "position": [37.95, 15.35], "radius_nm": 1.0, "rounding": "either", "name": "Messina Strait" },
+    { "position": [38.48, 14.95], "radius_nm": 1.0, "rounding": "either", "name": "Stromboli" },
+    { "position": [37.93, 12.32], "radius_nm": 1.0, "rounding": "either", "name": "Favignana" },
+    { "position": [36.77, 11.99], "radius_nm": 1.0, "rounding": "either", "name": "Pantelleria" },
+    { "position": [35.51, 12.60], "radius_nm": 1.0, "rounding": "either", "name": "Lampedusa" }
+  ],
+  "exclusions": [],
+  "depart_utc": "2026-10-17T10:00:00Z",
+  "min_depth_m": 3.0
+}

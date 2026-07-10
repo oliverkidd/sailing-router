@@ -1,0 +1,15 @@
+{
+  "name": "RORC Channel Race (simplified)",
+  "region": "English Channel / Solent, UK",
+  "note": "Simplified Cowes-based leg for planning demo; not the official course.",
+  "start": [50.76, -1.30],
+  "finish": [50.76, -1.30],
+  "marks": [
+    { "position": [50.67, -1.55], "radius_nm": 0.3, "rounding": "either", "name": "Needles" },
+    { "position": [49.90, -2.20], "radius_nm": 0.5, "rounding": "either", "name": "Casquets TSS W" },
+    { "position": [50.10, -1.00], "radius_nm": 0.5, "rounding": "either", "name": "Mid-Channel" }
+  ],
+  "exclusions": [],
+  "depart_utc": "2026-08-08T08:00:00Z",
+  "min_depth_m": 3.0
+}

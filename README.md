@@ -70,6 +70,23 @@ make fetch-fixtures   # small EU GRIB/JSON + DEM + depth + FES clips (tests neve
 2. **Offshore / offline:** draw/adjust course + boat config -> `/route` runs entirely against the
    cache. FES gives tides even with zero connectivity.
 
+## Optional native dependencies
+
+The default path (Open-Meteo wind + FES offline tides + geometric terrain-wind
+heuristic) needs **no native deps**. Enable the higher-fidelity backends when you
+want them:
+
+| Capability | Enable | Env |
+| --- | --- | --- |
+| WindNinja orographic wind | install WindNinja CLI (see Docker image) | `SAILING_TERRAIN_WIND_ENGINE=windninja`, `SAILING_WINDNINJA_BIN` |
+| Copernicus currents (MED / SMOC) | `pip install -e ".[metocean]"` + free token | `COPERNICUSMARINE_SERVICE_USERNAME/PASSWORD` |
+| Native GRIB (DWD/ECMWF/Météo-France) | `pip install -e ".[metocean]"` | `SAILING_FORECAST_NATIVE=1` |
+| Real FES2014/2022 tides | configure pyfes | `SAILING_FES_CONFIG` |
+| Copernicus DEM hillshade/elevation | drop a GeoTIFF in `data/dem/` | — |
+
+All of these degrade gracefully: if a binary/token is missing the app falls back
+to the offline default so routing always works.
+
 ## Data sources (all European, free)
 
 Forecast: Open-Meteo (default) / DWD / ECMWF open-data / Météo-France · Currents: Copernicus Marine

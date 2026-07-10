@@ -1,7 +1,20 @@
 // Thin typed client for the FastAPI backend. The frontend only ever exchanges
 // JSON — it never parses GRIB/NetCDF or runs WindNinja.
 
-import type { BoatConfig, ModelPreset, PolarCurve, RouteRequest, RouteResponse } from "./types";
+import type {
+  BoatConfig,
+  Course,
+  ModelPreset,
+  PolarCurve,
+  RouteRequest,
+  RouteResponse,
+} from "./types";
+
+export interface CourseSummary {
+  id: string;
+  name: string;
+  region?: string | null;
+}
 
 export interface BoatResponse {
   boat: BoatConfig;
@@ -33,6 +46,8 @@ export const api = {
     req<{ lat: number; lon: number; elevation_m: number | null }>(
       `/elevation?lat=${lat}&lon=${lon}`,
     ),
+  courses: () => req<CourseSummary[]>("/courses"),
+  course: (id: string) => req<Course & { name?: string }>(`/courses/${id}`),
   sampleBoat: () => req<BoatResponse>("/boat/sample"),
   polarCurve: (polarId: string) => req<PolarCurve>(`/boat/polar/${polarId}`),
   uploadBoat: async (file: File, config: Partial<BoatConfig>): Promise<BoatResponse> => {

@@ -79,10 +79,12 @@ export default function MapView({
   routes = [],
   course,
   showCurrents = false,
+  onMapClick,
 }: {
   routes?: ModelRoute[];
   course?: Course | null;
   showCurrents?: boolean;
+  onMapClick?: (lat: number, lon: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -91,9 +93,11 @@ export default function MapView({
   const routesRef = useRef<ModelRoute[]>(routes);
   const courseRef = useRef<Course | null | undefined>(course);
   const showCurrentsRef = useRef<boolean>(showCurrents);
+  const onMapClickRef = useRef(onMapClick);
   routesRef.current = routes;
   courseRef.current = course;
   showCurrentsRef.current = showCurrents;
+  onMapClickRef.current = onMapClick;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -171,8 +175,12 @@ export default function MapView({
       syncData();
     });
 
-    // Click -> elevation readout.
+    // Click -> course edit (if in edit mode) else elevation readout.
     map.on("click", async (e) => {
+      if (onMapClickRef.current) {
+        onMapClickRef.current(e.lngLat.lat, e.lngLat.lng);
+        return;
+      }
       try {
         const res = await fetch(
           `${API_BASE}/elevation?lat=${e.lngLat.lat.toFixed(4)}&lon=${e.lngLat.lng.toFixed(4)}`,
