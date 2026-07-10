@@ -3,6 +3,8 @@
 import maplibregl from "maplibre-gl";
 import { useEffect, useRef } from "react";
 import { API_BASE } from "@/lib/api";
+import { colorForModel } from "@/lib/colors";
+import type { Course, ModelRoute } from "@/lib/types";
 
 // UK + Mediterranean default view. OSM raster base (respect tile usage policy).
 const UK_MED_CENTER: [number, number] = [12.5, 42.0]; // lon, lat (central Med)
@@ -43,9 +45,51 @@ async function addGeoJsonLayer(
   }
 }
 
-export default function MapView() {
+function routesToFeatureCollection(routes: ModelRoute[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: routes.map((r) => ({
+      type: "Feature",
+      properties: { model_id: r.model_id, color: colorForModel(r.model_id) },
+      geometry: {
+        type: "LineString",
+        // GeoJSON is [lon, lat]; RouteLeg.position is [lat, lon].
+        coordinates: r.legs.map((leg) => [leg.position[1], leg.position[0]]),
+      },
+    })),
+  };
+}
+
+function maneuverPoints(routes: ModelRoute[]): GeoJSON.FeatureCollection {
+  const feats: GeoJSON.Feature[] = [];
+  for (const r of routes) {
+    for (const leg of r.legs) {
+      if (leg.maneuver === "none") continue;
+      feats.push({
+        type: "Feature",
+        properties: { maneuver: leg.maneuver, color: colorForModel(r.model_id) },
+        geometry: { type: "Point", coordinates: [leg.position[1], leg.position[0]] },
+      });
+    }
+  }
+  return { type: "FeatureCollection", features: feats };
+}
+
+export default function MapView({
+  routes = [],
+  course,
+}: {
+  routes?: ModelRoute[];
+  course?: Course | null;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const loadedRef = useRef(false);
+  const syncRef = useRef<(() => void) | null>(null);
+  const routesRef = useRef<ModelRoute[]>(routes);
+  const courseRef = useRef<Course | null | undefined>(course);
+  routesRef.current = routes;
+  courseRef.current = course;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -62,6 +106,7 @@ export default function MapView() {
     mapRef.current = map;
 
     map.on("load", () => {
+      loadedRef.current = true;
       // Depth contours + coastline overlays (advisory). Fetched as GeoJSON;
       // the frontend never parses bathymetry grids itself.
       void addGeoJsonLayer(map, `${API_BASE}/land/mask`, "land", {
@@ -76,6 +121,40 @@ export default function MapView() {
           "line-dasharray": [2, 2],
         },
       });
+
+      // Route + course sources (updated reactively below).
+      map.addSource("routes", { type: "geojson", data: routesToFeatureCollection([]) });
+      map.addLayer({
+        id: "routes",
+        source: "routes",
+        type: "line",
+        paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.9 },
+      });
+      map.addSource("maneuvers", { type: "geojson", data: maneuverPoints([]) });
+      map.addLayer({
+        id: "maneuvers",
+        source: "maneuvers",
+        type: "circle",
+        paint: {
+          "circle-radius": 3.5,
+          "circle-color": ["get", "color"],
+          "circle-stroke-color": "#0b1220",
+          "circle-stroke-width": 1,
+        },
+      });
+      map.addSource("course", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({
+        id: "course-marks",
+        source: "course",
+        type: "circle",
+        paint: {
+          "circle-radius": 5,
+          "circle-color": ["match", ["get", "kind"], "start", "#4ade80", "finish", "#fb7185", "#facc15"],
+          "circle-stroke-color": "#0b1220",
+          "circle-stroke-width": 2,
+        },
+      });
+      syncData();
     });
 
     // Click -> elevation readout.
@@ -99,11 +178,57 @@ export default function MapView() {
       }
     });
 
+    function syncData() {
+      const m = mapRef.current;
+      if (!m || !loadedRef.current) return;
+      const routes = routesRef.current;
+      const course = courseRef.current;
+      (m.getSource("routes") as maplibregl.GeoJSONSource | undefined)?.setData(
+        routesToFeatureCollection(routes),
+      );
+      (m.getSource("maneuvers") as maplibregl.GeoJSONSource | undefined)?.setData(
+        maneuverPoints(routes),
+      );
+      const courseFeatures: GeoJSON.Feature[] = [];
+      if (course) {
+        courseFeatures.push({
+          type: "Feature",
+          properties: { kind: "start" },
+          geometry: { type: "Point", coordinates: [course.start[1], course.start[0]] },
+        });
+        course.marks.forEach((mk, i) =>
+          courseFeatures.push({
+            type: "Feature",
+            properties: { kind: "mark", label: mk.name ?? `M${i + 1}` },
+            geometry: { type: "Point", coordinates: [mk.position[1], mk.position[0]] },
+          }),
+        );
+        courseFeatures.push({
+          type: "Feature",
+          properties: { kind: "finish" },
+          geometry: { type: "Point", coordinates: [course.finish[1], course.finish[0]] },
+        });
+      }
+      (m.getSource("course") as maplibregl.GeoJSONSource | undefined)?.setData({
+        type: "FeatureCollection",
+        features: courseFeatures,
+      });
+    }
+
+    syncRef.current = syncData;
+
     return () => {
       map.remove();
       mapRef.current = null;
+      loadedRef.current = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-sync route/course sources whenever they change.
+  useEffect(() => {
+    syncRef.current?.();
+  }, [routes, course]);
 
   return <div id="map" ref={containerRef} />;
 }

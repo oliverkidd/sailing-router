@@ -56,13 +56,16 @@ class OpenMeteoProvider(ForecastProvider):
                 lat_list.append(round(float(la), 4))
                 lon_list.append(round(float(lo), 4))
 
+        # Request whole days so hourly data starts at 00:00 UTC (forecast_hours would
+        # start at the current hour and miss earlier depart times).
+        days = max(1, min(16, -(-horizon_h // 24) + 1))
         params = {
             "latitude": ",".join(str(x) for x in lat_list),
             "longitude": ",".join(str(x) for x in lon_list),
             "hourly": "wind_speed_10m,wind_direction_10m",
             "wind_speed_unit": "ms",
             "models": om_model,
-            "forecast_hours": max(1, horizon_h),
+            "forecast_days": days,
             "timezone": "UTC",
         }
 

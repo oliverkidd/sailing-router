@@ -195,6 +195,21 @@ def load_default_depth() -> DepthField | None:
     return DepthField(z["lats"], z["lons"], z["depth_m"])
 
 
+def course_bbox(course: Course, margin_deg: float = 1.0):
+    """Bounding box covering the whole course (+margin) for metocean fetches."""
+    from .schemas import BBox
+
+    pts = [course.start, course.finish, *[m.position for m in course.marks]]
+    lats = [p[0] for p in pts]
+    lons = [p[1] for p in pts]
+    return BBox(
+        lat_min=min(lats) - margin_deg,
+        lon_min=min(lons) - margin_deg,
+        lat_max=max(lats) + margin_deg,
+        lon_max=max(lons) + margin_deg,
+    )
+
+
 def context_for_course(course: Course) -> GeoContext:
     """Assemble the GeoContext the router queries for a given course."""
     return GeoContext.build(
