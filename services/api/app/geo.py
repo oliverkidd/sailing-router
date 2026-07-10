@@ -98,6 +98,21 @@ class LandMask:
     def is_empty(self) -> bool:
         return self._prepared is None
 
+    @property
+    def polygons(self) -> list[Polygon]:
+        return [] if self._mp.is_empty else list(self._mp.geoms)
+
+    def islands(self) -> list[tuple[float, float, float]]:
+        """Rough island descriptors: (centroid_lat, centroid_lon, radius_nm)."""
+        out: list[tuple[float, float, float]] = []
+        for poly in self.polygons:
+            c = poly.centroid
+            # Approx radius from bounding box half-diagonal in nm.
+            minx, miny, maxx, maxy = poly.bounds
+            r_nm = 0.5 * distance_nm((miny, minx), (maxy, maxx))
+            out.append((c.y, c.x, r_nm))
+        return out
+
     def on_land(self, pos: LatLon) -> bool:
         if self._prepared is None:
             return False

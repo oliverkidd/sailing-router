@@ -69,6 +69,10 @@ class WindField:
         ) * ft
         return u, v
 
+    def uv_at(self, lat: float, lon: float, t: datetime) -> tuple[float, float] | None:
+        """Return (u, v) m/s (east, north) or None if outside the time window."""
+        return self._uv_at(lat, lon, t)
+
     def wind_at(self, lat: float, lon: float, t: datetime) -> tuple[float, float] | None:
         """Return (tws_knots, twd_deg_from) or None if forecast exhausted."""
         uv = self._uv_at(lat, lon, t)

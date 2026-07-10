@@ -14,15 +14,31 @@ from fastapi import APIRouter
 
 from .. import cache, store
 from ..boat import Boat
-from ..config import MODEL_PRESETS_BY_ID
+from ..config import MODEL_PRESETS_BY_ID, TERRAIN_WIND_ENGINE
 from ..currents import get_current_provider
 from ..forecast import get_provider
-from ..geo import context_for_course, course_bbox
+from ..geo import context_for_course, course_bbox, load_default_land
 from ..metocean import CurrentField, WindField
 from ..router import IsochroneRouter, RouterParams
 from ..schemas import ModelRoute, RouteRequest, RouteResponse
+from ..terrain import get_terrain
+from ..terrain_wind import get_terrain_wind
 
 router = APIRouter(tags=["route"])
+
+
+def _apply_terrain_wind(model_id: str, wind: WindField, req: RouteRequest) -> WindField:
+    """Downscale the model wind with the configured terrain-wind engine (cached)."""
+    engine = get_terrain_wind(TERRAIN_WIND_ENGINE)
+    if engine is None:
+        return wind
+    bbox = course_bbox(req.course)
+    key = cache.wind_key(f"{model_id}+terrain-{TERRAIN_WIND_ENGINE}", bbox, None)
+    if cache.has_wind(key):
+        return cache.load_wind(key)
+    downscaled = engine.apply(wind, load_default_land(), get_terrain())
+    cache.save_wind(key, downscaled)
+    return downscaled
 
 
 def _load_or_fetch_wind(model_id: str, req: RouteRequest, warnings: list[str]) -> WindField | None:
@@ -97,7 +113,8 @@ def compute_route(req: RouteRequest) -> RouteResponse:
         wind = _load_or_fetch_wind(model_id, req, warnings)
         if wind is None:
             continue
-        # Terrain wind wired in M6.
+        if req.use_terrain_wind:
+            wind = _apply_terrain_wind(model_id, wind, req)
         engine = IsochroneRouter(
             boat=boat,
             wind=wind,
