@@ -52,6 +52,12 @@ def _load_or_fetch_wind(model_id: str, req: RouteRequest, warnings: list[str]) -
     if cache.has_wind(key):
         return cache.load_wind(key)
 
+    # A broader pre-fetched region (make fetch-fixtures) covering this course is
+    # enough to route fully offline.
+    covering = cache.find_covering_wind(model_id, bbox)
+    if covering is not None:
+        return covering
+
     # Cache miss: try a live fetch (still local-first — result is cached to disk).
     try:
         horizon = 120

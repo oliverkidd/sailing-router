@@ -47,6 +47,28 @@ def load_wind(key: str) -> WindField:
     return WindField.load_npz(path)
 
 
+def find_covering_wind(model_id: str, bbox: BBox) -> WindField | None:
+    """Return any cached WindField for this model whose grid covers `bbox`.
+
+    Lets a broadly pre-fetched region (e.g. via `make fetch-fixtures`) serve any
+    course contained within it — the core of the "fetch ashore, race offline" flow.
+    """
+    prefix = f"{model_id}__"
+    for path in sorted(_WIND_DIR.glob(f"{prefix}*.npz")):
+        try:
+            wf = WindField.load_npz(path)
+        except Exception:  # noqa: BLE001
+            continue
+        if (
+            wf.lats[0] <= bbox.lat_min
+            and wf.lats[-1] >= bbox.lat_max
+            and wf.lons[0] <= bbox.lon_min
+            and wf.lons[-1] >= bbox.lon_max
+        ):
+            return wf
+    return None
+
+
 def current_key(source: str, bbox: BBox, window_start: str) -> str:
     return f"{source}__{_bbox_hash(bbox)}__{window_start}"
 

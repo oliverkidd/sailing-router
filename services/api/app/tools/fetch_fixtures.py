@@ -15,7 +15,8 @@ from ..currents import get_current_provider
 from ..forecast import get_provider
 from ..schemas import BBox
 
-AEGEAN = BBox(lat_min=35.5, lon_min=23.5, lat_max=38.0, lon_max=26.0)
+# Broad Aegean box so any contained sample course routes fully offline.
+AEGEAN = BBox(lat_min=35.0, lon_min=23.0, lat_max=38.5, lon_max=26.5)
 
 
 def main() -> None:
