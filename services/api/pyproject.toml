@@ -14,16 +14,20 @@ dependencies = [
     "weatherrouting>=0.6",
     "scikit-image>=0.24",
     "pyshp>=2.3",
+    # GRIB pipeline (native forecast sources)
+    "cfgrib>=0.9",
+    "eccodes>=1.6",
+    "xarray>=2024.6",
+    "scipy>=1.11",
+    "zarr>=2.18",
+    "ecmwf-opendata>=0.3",
 ]
 
 [project.optional-dependencies]
-# Heavy / native-dep extras. Open-Meteo default path does NOT need these.
-metocean = [
-    "xarray>=2024.6",
+# Optional heavy extras not required for the GRIB wind path.
+extras = [
     "netCDF4>=1.6",
     "rasterio>=1.3",
-    "cfgrib>=0.9",
-    "ecmwf-opendata>=0.3",
     "copernicusmarine>=1.3",
 ]
 dev = [

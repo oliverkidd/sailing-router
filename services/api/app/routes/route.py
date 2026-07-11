@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, timedelta
 
 import numpy as np
 from fastapi import APIRouter
 
 from .. import store
 from ..boat import Boat
+from ..field_service import forecast_horizon_for_course, get_area_field
 from ..geo import context_for_course, course_bbox
-from ..metocean_service import forecast_horizon_for_course, load_or_fetch_wind_for_route
 from ..router import IsochroneRouter, RouterParams
 from ..schemas import ModelRoute, RouteRequest, RouteResponse
 
@@ -48,11 +49,18 @@ def compute_route(req: RouteRequest) -> RouteResponse:
     )
 
     horizon_h = forecast_horizon_for_course(req.course)
+    depart = req.course.depart_utc
+    if depart.tzinfo is None:
+        depart = depart.replace(tzinfo=UTC)
+    end = depart + timedelta(hours=horizon_h)
 
     routes: list[ModelRoute] = []
     for model_id in req.model_ids:
-        wind = load_or_fetch_wind_for_route(model_id, course_bbox(req.course), horizon_h, warnings)
+        wind = get_area_field(
+            model_id, course_bbox(req.course), start=depart, end=end
+        )
         if wind is None:
+            warnings.append(f"{model_id}: wind unavailable")
             continue
         engine = IsochroneRouter(
             boat=boat,
@@ -71,8 +79,8 @@ def compute_route(req: RouteRequest) -> RouteResponse:
 
     if not routes:
         warnings.append(
-            "No routes computed. Forecast data could not be fetched from Open-Meteo "
-            "(free service, sometimes rate-limited). Try GFS/ECMWF/ICON only, or retry in a minute."
+            "No routes computed. Wind data could not be fetched from GRIB sources. "
+            "Check model availability for this area, or retry later."
         )
 
     return RouteResponse(routes=routes, warnings=warnings)

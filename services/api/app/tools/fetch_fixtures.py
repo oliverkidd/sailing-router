@@ -1,13 +1,12 @@
-"""Fetch small European fixtures for fully-offline tests + demo."""
+"""Fetch small European fixtures for fully-offline tests + demo (GRIB sources)."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from .. import cache
-from ..forecast import get_provider
+from ..field_service import get_area_field
 from ..geo.fetch import ensure_geo_context
-from ..schemas import Course
+from ..schemas import BBox, Course
 
 AEGEAN_START = (36.2, 24.6)
 AEGEAN_FINISH = (37.0, 24.6)
@@ -16,16 +15,17 @@ AEGEAN_FINISH = (37.0, 24.6)
 def main() -> None:
     now = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    print("Fetching Open-Meteo wind fixtures (ECMWF, ICON, GFS) over the Aegean…")
-    from ..schemas import BBox
-
+    print("Fetching GRIB wind fixtures (ECMWF, GFS) over the Aegean…")
     aegean = BBox(lat_min=35.0, lon_min=23.0, lat_max=38.5, lon_max=26.5)
-    for model_id in ("ecmwf", "icon", "gfs"):
+    for model_id in ("ecmwf", "gfs"):
         try:
-            field = get_provider("open-meteo").fetch(model_id, aegean, None, 72)
-            key = cache.wind_key(model_id, aegean, None)
-            cache.save_wind(key, field)
-            print(f"  {model_id}: cached {field.n_times} steps -> {key}")
+            field = get_area_field(
+                model_id, aegean, start=now, end=now + timedelta(hours=72)
+            )
+            if field is None:
+                print(f"  {model_id}: unavailable")
+            else:
+                print(f"  {model_id}: cached {field.n_times} steps")
         except Exception as exc:  # noqa: BLE001
             print(f"  {model_id}: FAILED ({exc})")
 
@@ -48,7 +48,7 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"  {label}: geo FAILED ({exc})")
 
-    print("Done. The app can now route offline over the Aegean bbox.")
+    print("Done. The app can now route from cached GRIB fields.")
 
 
 if __name__ == "__main__":

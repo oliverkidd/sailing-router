@@ -55,9 +55,13 @@ function NumberRow({
 export default function BoatConfigPanel({
   config,
   onConfigChange,
+  minDepthM,
+  onMinDepthChange,
 }: {
   config: BoatConfig;
   onConfigChange: (c: BoatConfig) => void;
+  minDepthM: number;
+  onMinDepthChange: (m: number) => void;
 }) {
   const [curve, setCurve] = useState<PolarCurve | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -66,7 +70,6 @@ export default function BoatConfigPanel({
   const set = (patch: Partial<BoatConfig>) => onConfigChange({ ...config, ...patch });
 
   useEffect(() => {
-    // Bootstrap with the bundled sample polar.
     if (config.polar_id) return;
     api
       .sampleBoat()
@@ -94,10 +97,11 @@ export default function BoatConfigPanel({
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
-        <PolarDiagram curve={curve} />
+        <PolarDiagram curve={curve} size={148} />
       </div>
 
       <button
+        type="button"
         onClick={() => fileRef.current?.click()}
         style={{
           width: "100%",
@@ -121,6 +125,12 @@ export default function BoatConfigPanel({
         onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
       />
 
+      <NumberRow
+        label="Safety depth (m)"
+        value={minDepthM}
+        step={0.5}
+        onChange={(v) => onMinDepthChange(v ?? 0)}
+      />
       <NumberRow label="Tack penalty (s)" value={config.tack_penalty_s} onChange={(v) => set({ tack_penalty_s: v ?? 0 })} />
       <NumberRow label="Gybe penalty (s)" value={config.gybe_penalty_s} onChange={(v) => set({ gybe_penalty_s: v ?? 0 })} />
       <NumberRow label="Upwind TWA°" value={config.upwind_twa_deg} placeholder="auto" onChange={(v) => set({ upwind_twa_deg: v })} />

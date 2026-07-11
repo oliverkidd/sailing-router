@@ -1,6 +1,7 @@
 "use client";
 
 import maplibregl from "maplibre-gl";
+import { Protocol } from "pmtiles";
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import {
@@ -8,37 +9,176 @@ import {
   courseIsReady,
   type MapBounds,
 } from "@/lib/mapOverlays";
-import { sampleGrid, type MeteoGrid } from "@/lib/meteoGrid";
+import { sampleGrid, sliceSeries, type MeteoGrid, type WindSeries } from "@/lib/meteoGrid";
 import { WindHeatmapLayer } from "@/lib/windHeatmap";
 import { WindArrowLayer, WIND_ARROW_ICON_ID } from "@/lib/windArrows";
 import { colorForModel } from "@/lib/colors";
 import { BOAT_SVG, WIND_ARROW_SVG, svgToImage } from "@/lib/mapIcons";
 import { formatPointPopup, type PointInspect } from "@/lib/mapPopup";
-import {
-  ensureWindTiles,
-  stitchTiles,
-  viewportMaxSpanMiles,
-} from "@/lib/windTiles";
+import { REGION_CENTER, REGION_MAX_BOUNDS } from "@/lib/region";
+import { viewportMaxSpanMiles } from "@/lib/windTiles";
 import type { Course, ModelRoute } from "@/lib/types";
 
-const UK_MED_CENTER: [number, number] = [12.5, 42.0];
-const DEFAULT_ZOOM = 4;
+const DEFAULT_ZOOM = 5;
+const MIN_ZOOM = 4;
 
-const OSM_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    osm: {
-      type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution: "© OpenStreetMap contributors",
+let pmtilesRegistered = false;
+function ensurePmtilesProtocol() {
+  if (pmtilesRegistered) return;
+  const protocol = new Protocol();
+  maplibregl.addProtocol("pmtiles", protocol.tile);
+  pmtilesRegistered = true;
+}
+
+/** Dark nautical chart — land + depth isobaths from local PMTiles (no runtime fetch). */
+function buildChartStyle(origin: string): maplibregl.StyleSpecification {
+  const coastUrl = `pmtiles://${origin}/geo/coastline.pmtiles`;
+  const depthUrl = `pmtiles://${origin}/geo/depth.pmtiles`;
+
+  return {
+    version: 8,
+    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+    sources: {
+      coastline: { type: "vector", url: coastUrl },
+      depth: { type: "vector", url: depthUrl },
     },
-  },
-  layers: [
-    { id: "background", type: "background", paint: { "background-color": "#0b1220" } },
-    { id: "osm", type: "raster", source: "osm", paint: { "raster-opacity": 0.85 } },
-  ],
-};
+    layers: [
+      {
+        id: "background",
+        type: "background",
+        paint: { "background-color": "#0a1628" },
+      },
+      {
+        id: "depth-line",
+        type: "line",
+        source: "depth",
+        "source-layer": "depth",
+        minzoom: 4,
+        paint: {
+          "line-color": [
+            "interpolate",
+            ["linear"],
+            ["get", "depth"],
+            2,
+            "#e2e8f0",
+            10,
+            "#94a3b8",
+            30,
+            "#64748b",
+            50,
+            "#64748b",
+            200,
+            "#475569",
+          ],
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            4,
+            ["case", ["<=", ["get", "depth"], 10], 0.9, 0.4],
+            10,
+            ["case", ["<=", ["get", "depth"], 10], 1.5, 0.7],
+            14,
+            ["case", ["<=", ["get", "depth"], 10], 2.2, 1.0],
+          ],
+          "line-opacity": [
+            "interpolate",
+            ["linear"],
+            ["get", "depth"],
+            2,
+            0.85,
+            50,
+            0.55,
+            200,
+            0.35,
+          ],
+        },
+      },
+      {
+        id: "depth-label",
+        type: "symbol",
+        source: "depth",
+        "source-layer": "depth",
+        minzoom: 8,
+        layout: {
+          "symbol-placement": "line",
+          "symbol-spacing": 280,
+          "text-field": ["concat", ["to-string", ["get", "depth"]], "m"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 8, 9, 12, 11],
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-max-angle": 30,
+          "text-optional": true,
+          "text-allow-overlap": false,
+          "text-padding": 2,
+        },
+        paint: {
+          "text-color": "#cbd5e1",
+          "text-halo-color": "rgba(10, 22, 40, 0.85)",
+          "text-halo-width": 1.5,
+          "text-opacity": 0.9,
+        },
+      },
+      {
+        id: "land-fill",
+        type: "fill",
+        source: "coastline",
+        "source-layer": "land",
+        paint: {
+          "fill-color": "#64748b",
+          "fill-opacity": 1,
+        },
+      },
+      {
+        id: "coastline-line",
+        type: "line",
+        source: "coastline",
+        "source-layer": "land",
+        paint: {
+          "line-color": "#e2e8f0",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.0, 8, 1.6, 12, 2.2],
+          "line-opacity": 0.95,
+        },
+      },
+      {
+        id: "place-labels",
+        type: "symbol",
+        source: "coastline",
+        "source-layer": "places",
+        minzoom: 5,
+        layout: {
+          "text-field": ["get", "name"],
+          // MapLibre allows only one zoom-based interpolate/step per expression.
+          "text-size": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            5,
+            ["match", ["get", "kind"], "island", 11, 9],
+            10,
+            ["match", ["get", "kind"], "island", 14, 12],
+          ],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-anchor": "center",
+          "text-optional": true,
+          "text-padding": 4,
+          "text-max-width": 10,
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": ["match", ["get", "kind"], "island", "#e2e8f0", "#cbd5e1"],
+          "text-halo-color": "rgba(10, 22, 40, 0.9)",
+          "text-halo-width": 1.8,
+          "text-opacity": 0.92,
+        },
+        filter: [
+          "any",
+          ["<=", ["get", "rank"], 4],
+          [">=", ["zoom"], 7],
+        ],
+      },
+    ],
+  };
+}
 
 function routesToFeatureCollection(routes: ModelRoute[]): GeoJSON.FeatureCollection {
   return {
@@ -102,10 +242,8 @@ export default function MapView({
   routes = [],
   course,
   showWind = false,
-  forecastEnabled = false,
-  windModelId = "ecmwf",
-  windModelResolutionDeg = 0.25,
   windTimeUtc,
+  windSeries = null,
   playbackPosition = null,
   playbackHeading = null,
   fitRouteKey,
@@ -117,11 +255,9 @@ export default function MapView({
   routes?: ModelRoute[];
   course?: Course | null;
   showWind?: boolean;
-  /** True when viewport max span < 300 mi — gates wind tile fetches. */
-  forecastEnabled?: boolean;
-  windModelId?: string;
-  windModelResolutionDeg?: number;
   windTimeUtc?: string;
+  /** Multi-hour field — browse + playback both slice locally (no tile fetches). */
+  windSeries?: WindSeries | null;
   playbackPosition?: [number, number] | null;
   playbackHeading?: number | null;
   fitRouteKey?: string;
@@ -134,8 +270,6 @@ export default function MapView({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const loadedRef = useRef(false);
   const syncLocalRef = useRef<(() => void) | null>(null);
-  const syncOverlaysRef = useRef<(() => void) | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const onRouteSelectRef = useRef(onRouteSelect);
   const onMapClickRef = useRef(onMapClick);
   const onOverlayErrorRef = useRef(onOverlayError);
@@ -151,10 +285,8 @@ export default function MapView({
     routes,
     course,
     showWind,
-    forecastEnabled,
-    windModelId,
-    windModelResolutionDeg,
     windTimeUtc,
+    windSeries,
     playbackPosition,
     playbackHeading,
   });
@@ -163,10 +295,8 @@ export default function MapView({
     routes,
     course,
     showWind,
-    forecastEnabled,
-    windModelId,
-    windModelResolutionDeg,
     windTimeUtc,
+    windSeries,
     playbackPosition,
     playbackHeading,
   };
@@ -177,17 +307,25 @@ export default function MapView({
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    ensurePmtilesProtocol();
+
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: OSM_STYLE,
-      center: UK_MED_CENTER,
+      style: buildChartStyle(window.location.origin),
+      center: REGION_CENTER,
       zoom: DEFAULT_ZOOM,
+      minZoom: MIN_ZOOM,
       maxZoom: 14,
+      maxBounds: REGION_MAX_BOUNDS,
       attributionControl: { compact: true },
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
-    map.addControl(new maplibregl.ScaleControl({ unit: "nautical" as never }), "bottom-right");
     mapRef.current = map;
+
+    map.on("error", (e) => {
+      const msg = e.error?.message ?? String(e.error ?? "Map error");
+      console.warn("[map]", msg, e);
+      onOverlayErrorRef.current?.(msg);
+    });
 
     const windHeat = new WindHeatmapLayer();
     const windArrows = new WindArrowLayer();
@@ -198,7 +336,9 @@ export default function MapView({
       loadedRef.current = true;
       const empty = { type: "FeatureCollection" as const, features: [] };
 
-      windHeat.attach(map);
+      // Wind under depth + land: background → wind → depth → land → labels → routes
+      windHeat.attach(map, "depth-line");
+
 
       try {
         const arrowImg = await svgToImage(WIND_ARROW_SVG, 48);
@@ -208,7 +348,8 @@ export default function MapView({
       } catch (e) {
         console.warn("[map] wind arrow icon failed to load", e);
       }
-      windArrows.attach(map);
+      windArrows.attach(map, "depth-line");
+
 
       map.addSource("routes", { type: "geojson", data: routesToFeatureCollection([]) });
       map.addLayer({
@@ -284,22 +425,26 @@ export default function MapView({
         map.getCanvas().style.cursor = "";
       });
 
-      map.moveLayer("wind-heatmap-canvas", "routes");
-      if (map.getLayer("wind-arrows")) map.moveLayer("wind-arrows", "routes");
+      // Keep forecast overlays under land; place labels above wind/depth for readability.
+      // Wind was inserted before depth-line; do not lift it above land.
+      if (map.getLayer("place-labels") && map.getLayer("routes")) {
+        try {
+          map.moveLayer("place-labels", "routes");
+        } catch {
+          /* layer order optional */
+        }
+      }
 
       emitViewport();
       syncLocalData();
-      syncOverlays();
     });
 
     const debouncedViewport = debounce(() => {
       emitViewport();
-      // Re-render arrows for new screen positions; tiles only fetch if missing.
       const grid = windGridRef.current;
       if (grid && propsRef.current.showWind) {
-        windArrowsRef.current?.setGrid(grid);
+        windArrowsRef.current?.setGrid(grid, { immediate: true });
       }
-      syncOverlays();
     }, 350);
 
     map.on("moveend", debouncedViewport);
@@ -336,7 +481,11 @@ export default function MapView({
       }
 
       popupRef.current?.remove();
-      popupRef.current = new maplibregl.Popup({ maxWidth: "240px" })
+      popupRef.current = new maplibregl.Popup({
+        maxWidth: "280px",
+        className: "map-click-popup-wrap",
+        closeButton: true,
+      })
         .setLngLat(e.lngLat)
         .setHTML(formatPointPopup(data))
         .addTo(map);
@@ -395,68 +544,9 @@ export default function MapView({
       windArrowsRef.current?.setVisible(m, p.showWind && windDataRef.current);
     }
 
-    async function syncOverlays() {
-      const m = mapRef.current;
-      if (!m || !loadedRef.current) return;
-      const p = propsRef.current;
-      const bbox: MapBounds = boundsFromMap(() => m.getBounds());
-      const tUtc = p.windTimeUtc ?? p.course?.depart_utc ?? new Date().toISOString();
-
-      abortRef.current?.abort();
-      const ac = new AbortController();
-      abortRef.current = ac;
-
-      if (!p.showWind || !p.forecastEnabled) {
-        windDataRef.current = false;
-        windGridRef.current = null;
-        windHeatRef.current?.setGrid(null);
-        windArrowsRef.current?.setGrid(null);
-        syncLocalData();
-        onOverlayErrorRef.current?.(null);
-        return;
-      }
-
-      try {
-        const { tiles, error } = await ensureWindTiles({
-          viewport: bbox,
-          modelId: p.windModelId,
-          modelResolutionDeg: p.windModelResolutionDeg,
-          tUtc,
-          signal: ac.signal,
-        });
-        if (ac.signal.aborted) return;
-
-        const stitched = stitchTiles(tiles);
-        if (stitched) {
-          windDataRef.current = true;
-          windGridRef.current = stitched;
-          windHeatRef.current?.setGrid(stitched);
-          windArrowsRef.current?.setGrid(stitched);
-          onOverlayErrorRef.current?.(error ? `Wind: ${error}` : null);
-        } else {
-          windDataRef.current = false;
-          windGridRef.current = null;
-          windHeatRef.current?.setGrid(null);
-          windArrowsRef.current?.setGrid(null);
-          onOverlayErrorRef.current?.(error ? `Wind: ${error}` : "Wind unavailable");
-        }
-        syncLocalData();
-      } catch (e) {
-        if ((e as Error).name === "AbortError") return;
-        windDataRef.current = false;
-        windGridRef.current = null;
-        windHeatRef.current?.setGrid(null);
-        windArrowsRef.current?.setGrid(null);
-        onOverlayErrorRef.current?.(`Wind: ${String(e)}`);
-        syncLocalData();
-      }
-    }
-
     syncLocalRef.current = () => syncLocalData();
-    syncOverlaysRef.current = () => void syncOverlays();
 
     return () => {
-      abortRef.current?.abort();
       popupRef.current?.remove();
       windHeatRef.current?.destroy(map);
       windArrowsRef.current?.destroy(map);
@@ -470,9 +560,36 @@ export default function MapView({
     syncLocalRef.current?.();
   }, [routes, course, playbackPosition, playbackHeading, showWind]);
 
+  // Browse + playback: slice the series locally — no network.
   useEffect(() => {
-    syncOverlaysRef.current?.();
-  }, [showWind, forecastEnabled, windModelId, windModelResolutionDeg, windTimeUtc]);
+    const m = mapRef.current;
+    if (!m || !loadedRef.current) return;
+
+    if (!showWind) {
+      windDataRef.current = false;
+      windGridRef.current = null;
+      windHeatRef.current?.setGrid(null);
+      windArrowsRef.current?.setGrid(null);
+      syncLocalRef.current?.();
+      return;
+    }
+
+    if (windSeries && windTimeUtc) {
+      const grid = sliceSeries(windSeries, windTimeUtc);
+      windDataRef.current = true;
+      windGridRef.current = grid;
+      windHeatRef.current?.setGrid(grid);
+      windArrowsRef.current?.setGrid(grid, { immediate: true });
+      syncLocalRef.current?.();
+      return;
+    }
+
+    windDataRef.current = false;
+    windGridRef.current = null;
+    windHeatRef.current?.setGrid(null);
+    windArrowsRef.current?.setGrid(null);
+    syncLocalRef.current?.();
+  }, [windSeries, windTimeUtc, showWind]);
 
   useEffect(() => {
     const m = mapRef.current;

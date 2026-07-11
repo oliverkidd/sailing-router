@@ -12,7 +12,7 @@ todos:
     content: "M0b Scaffold API: FastAPI app (main.py, config.py, schemas.py stub), /health endpoint, uvicorn dev target, pyproject with pinned deps, ruff+pytest configured"
     status: pending
   - id: m0-scaffold-web
-    content: "M0c Scaffold web: Next.js+TS app, install pnpm, MapLibre GL MapView over UK+Med bbox with OSM base + PredictWind-style dark shell (left rail + bottom bar placeholders), api.ts client, colors.ts palette. AC: make dev up, map loads"
+    content: "M0c Scaffold web: Next.js+TS app, install pnpm, MapLibre GL MapView over UK+Med bbox with dark chart shell (left rail + bottom bar placeholders), api.ts client, colors.ts palette. AC: make dev up, map loads"
     status: pending
   - id: m1-polar
     content: "M1a Polar (polar.py): PolarTable from ORC/Expedition CSV (row=TWS,col=TWA), speedFor(tws,twa) clamp+bilinear, no-go->0 below upwind/above deep-run. Unit tests: exact grid lookup, interp tolerance, no-go=0"
@@ -39,7 +39,7 @@ todos:
     content: "M3a Terrain (terrain.py): pre-clipped Copernicus DEM GLO-30 via rasterio; elevation(lat,lon); hillshade + terrain-RGB source for map; /elevation endpoint"
     status: pending
   - id: m3-geo
-    content: "M3b Geo (geo.py): land polygons (OSM/Natural Earth) on_land + segment_crosses_land; EMODnet depth grid depth()+too_shallow(min_depth_m); exclusion polygons in_exclusion; geodesy destination/distance_nm/bearing (doc GC vs rhumb). AC per 7.5"
+    content: "M3b Geo (geo.py): land polygons (GSHHG/Natural Earth) on_land + segment_crosses_land; EMODnet depth grid depth()+too_shallow(min_depth_m); exclusion polygons in_exclusion; geodesy destination/distance_nm/bearing (doc GC vs rhumb). AC per 7.5"
     status: pending
   - id: m3-masks
     content: "M3c Masks: prebuild land/depth masks + depth contours GeoJSON (0/3/5/10 m) for one race bbox; store in data/masks/; render depth contours + safe-water shading on map"
@@ -123,7 +123,7 @@ Local-first static route planner for **UK + Mediterranean** offshore racing. Giv
 - **Currents/tides:** Copernicus Marine (MED + NW-Shelf/global SMOC) + FES2014/2022 harmonics for offline.
 - **Terrain/elevation:** Copernicus DEM GLO-30 (terrain-RGB + point query).
 - **Depth/bathymetry:** EMODnet Bathymetry (contours + grid).
-- **Land mask:** OSM / Natural Earth coastline polygons (coarse, not nav-grade).
+- **Land mask:** GSHHG / Natural Earth coastline polygons (coarse, not nav-grade).
 - **Multi-model UX:** route each model separately, overlay in distinct colors, **no aggregation** (PredictWind-style).
 - Two runtimes (Python + Node) plus one native binary (WindNinja), all local.
 
@@ -131,7 +131,7 @@ Local-first static route planner for **UK + Mediterranean** offshore racing. Giv
 Clean, modern marine routing UI:
 - Dark chart canvas as the hero. Slim left control rail with collapsible sections: **Course editor**, **BoatConfig panel**, **Model picker**. Floating bottom **CompareBar** with color-swatched per-model rows.
 - **Distinct color per model**, overlaid (never aggregated); consistent palette in `apps/web/src/lib/colors.ts` matching `ModelPreset.color`.
-- Layer stack (bottom->top): OSM base -> Copernicus DEM terrain-RGB + hillshade (island/mountain relief, wind shadows) -> EMODnet depth contours (0/3/5/10 m) with >=`min_depth_m` safe-water shading -> current particle flow -> per-model route GeoJSON lines with tack/gybe/mark markers -> optional wind-shadow polygons. Click -> elevation readout.
+- Layer stack (bottom->top): in-house nautical basemap (GSHHG coastline + EMODnet/GEBCO depth isobaths 2–30 m + place/island labels) -> wind heatmap/arrows -> per-model route GeoJSON lines with tack/gybe/mark markers. Click -> elevation/depth readout.
 - Crisp typography, subtle panels, tabular numerics in RouteTable/CompareBar, hover tooltips, smooth layer toggles, model color swatches everywhere.
 
 ## Step 0 — Git repo (runs first, in background)
@@ -150,11 +150,11 @@ flowchart TD
     Routes["/boat /forecasts /currents /route /elevation /models"]
     Mods["boat · polar · forecast · terrain_wind · currents · terrain · geo · metocean · router · cache"]
   end
-  Tiles["EU tile sources: OSM base · OpenSeaMap* · Copernicus DEM RGB · EMODnet depth"]
+  Tiles["Nautical basemap: GSHHG coast · depth isobaths · place labels via /basemap/area"]
   WN["WindNinja binary (local): DEM + coarse wind -> grid"]
   Cache["Local disk cache: wind · terrain-wind · currents · masks · DEM"]
   UI -->|REST/JSON| Routes
-  UI -->|static tiles| Tiles
+  UI -->|/basemap/area GeoJSON| Tiles
   Routes --> Mods
   Mods --> WN
   Mods --> Cache
@@ -244,9 +244,9 @@ class RouteResponse(BaseModel):
 - `TerrainWindModel` — **WindNinja** (local OSS binary, no data feed) + geometric heuristic fallback.
 - `CurrentProvider` — **Copernicus Marine MED** (`MEDSEA_ANALYSISFORECAST_PHY_006_013`, incl. tides), **Copernicus SMOC/NW-Shelf** (`GLOBAL_ANALYSISFORECAST_PHY_001_024`, circulation + FES tidal + Stokes), **FES2014/2022** (offline harmonics, anywhere).
 - `TerrainProvider` — **Copernicus DEM GLO-30** (elevation / terrain-RGB, pre-clipped).
-- `DepthProvider` — **EMODnet Bathymetry** (depth grid + contours; Med + NW-Europe/UK).
-- `LandProvider` — **OSM / Natural Earth** coastline polygons.
-- Base tiles: OSM raster/vector; optional OpenSeaMap seamarks overlay.
+- `DepthProvider` — **EMODnet Bathymetry** (depth grid + contours; Med + NW-Europe/UK) with **GEBCO** global fallback.
+- `LandProvider` — **GSHHG** high-res coastlines (Natural Earth 110m fallback).
+- Base chart: in-house MapLibre style via `/basemap/area` (coastline + depth isobaths + place/island labels). No third-party raster basemap.
 - **Defaults:** Open-Meteo for all models; currents default to **Copernicus SMOC** (global, incl. tidal) with **FES** offline fallback; MED product when higher-res Med tidal detail wanted.
 - Agent must **verify live endpoints/params at build time** and keep small European fixtures in `data/fixtures/` so tests never hit the network.
 
@@ -284,7 +284,7 @@ class RouteResponse(BaseModel):
 
 ### 7.5 Terrain / depth / land (`terrain.py`, `geo.py`)
 - `elevation(lat,lon)` from pre-clipped Copernicus DEM (`rasterio`); serves hillshade + wind-shadow + `/elevation`.
-- Land polygons (OSM/Natural Earth) -> `on_land`, `segment_crosses_land`.
+- Land polygons (GSHHG / Natural Earth) -> `on_land`, `segment_crosses_land`.
 - EMODnet depth grid -> `depth`, `too_shallow(...,min_depth_m)`; contours as GeoJSON for the map.
 - Exclusion polygons -> `in_exclusion`.
 - Geodesy: `destination`, `distance_nm`, `bearing` (document great-circle vs rhumb).
@@ -332,7 +332,7 @@ BACKTRACK parents from best finish node → list[RouteLeg]
 - **AC:** constant wind/no current/no terrain -> expected VMG-tacking route + plausible ETA; currents on changes ETA/track (strong tidal gate shifts timing); terrain wind on/off changes route near islands; island between endpoints -> route goes around; two models -> two different routes; ~600 nm course at defaults completes < ~15 s incl. cached terrain wind.
 
 ### 7.7 Frontend
-- **MapView:** OSM base; DEM terrain-RGB + hillshade; EMODnet depth contours (0/3/5/10 m) with >=`min_depth_m` safe shading; **current particle** layer; one colored GeoJSON line per model with tack/gybe/mark markers; optional wind-shadow polygons; click -> elevation.
+- **MapView:** in-house nautical basemap (GSHHG coastline + depth isobaths 2–30 m + place/island labels from `/basemap/area`); wind heatmap/arrows; one colored GeoJSON line per model with tack/gybe/mark markers; click -> elevation/depth.
 - **BoatConfigPanel:** edit tack/gybe penalties, tack-angle overrides, leeway coeff, current-drift factor, polar-efficiency; upload polar.
 - **ModelPicker:** checkbox list of 5-6 European presets with color swatches; toggles `use_terrain_wind`/`use_currents`; "Run".
 - **CompareBar:** row per model — color, label, ETA (UTC + elapsed), distance, tacks/gybes, forecast-exhausted flag.
@@ -352,7 +352,7 @@ GET  /health
 All UTC ISO-8601; positions `(lat,lon)`. `/route` fails fast with `warnings[]` if a model or currents aren't cached (frontend then calls the fetch endpoints).
 
 ## Build milestones (ordered — each passes its AC before the next)
-- **M0 Scaffold:** monorepo, FastAPI `/health`, MapLibre map over UK+Med with OSM base, `make dev`, docker-compose pinning eccodes+WindNinja, install pnpm. *AC:* `make dev` up; map loads.
+- **M0 Scaffold:** monorepo, FastAPI `/health`, MapLibre map over UK+Med with nautical chart baseline, `make dev`, docker-compose pinning eccodes+WindNinja, install pnpm. *AC:* `make dev` up; map loads.
 - **M1 Boat + Polar:** CSV -> `PolarTable`; `BoatConfig` with penalties/overrides/leeway/derate; polar diagram. *AC:* §7.1.
 - **M2 Forecast (Open-Meteo):** ECMWF + ICON via Open-Meteo -> canonical `WindField`; `windAt`. *AC:* §7.2 vs EU fixture. **[GATE 1]**
 - **M3 Geo + depth:** land + EMODnet depth + exclusions + geodesy; masks prebuilt for one race bbox. *AC:* §7.5.

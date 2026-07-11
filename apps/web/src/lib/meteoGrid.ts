@@ -1,4 +1,4 @@
-/** Compact u/v grid from /wind/grid tiles. */
+/** Compact u/v grid from /wind/area (browse + playback share one series path). */
 
 import { API_BASE } from "./api";
 import type { MapBounds } from "./mapOverlays";
@@ -21,8 +21,25 @@ export interface MeteoGrid {
   message?: string;
 }
 
-export interface MeteoGridResult {
-  grid: MeteoGrid | null;
+export interface WindSeries {
+  lat0: number;
+  lon0: number;
+  dlat: number;
+  dlon: number;
+  nlat: number;
+  nlon: number;
+  times: string[];
+  u: number[][];
+  v: number[][];
+  speed_kn: number[][];
+  model_id?: string;
+  bbox?: MapBounds;
+  error?: string;
+  message?: string;
+}
+
+export interface WindSeriesResult {
+  series: WindSeries | null;
   error?: string;
 }
 
@@ -36,30 +53,133 @@ function bboxParams(b: MapBounds, extra?: Record<string, string>) {
   });
 }
 
-/** Fetch one LOD wind tile at explicit dims (no zoom param). */
-export async function fetchWindTile(
+/** Fetch multi-hour wind series for a viewport (GRIB-backed /wind/area). */
+export async function fetchWindArea(
   bbox: MapBounds,
-  tUtc: string,
   modelId: string,
-  nx: number,
-  ny: number,
+  startUtc: string,
+  endUtc: string,
   signal?: AbortSignal,
-): Promise<MeteoGridResult> {
+): Promise<WindSeriesResult> {
   const q = bboxParams(bbox, {
-    t_utc: tUtc,
     model_id: modelId,
-    nx: String(nx),
-    ny: String(ny),
+    start_utc: startUtc,
+    end_utc: endUtc,
   });
-  const res = await fetch(`${API_BASE}/wind/grid?${q}`, { signal });
+  const res = await fetch(`${API_BASE}/wind/area?${q}`, { signal });
   if (!res.ok) {
-    return { grid: null, error: `Wind API error (${res.status})` };
+    return { series: null, error: `Wind area API error (${res.status})` };
   }
-  const data = (await res.json()) as MeteoGrid;
+  const data = (await res.json()) as WindSeries;
   if (data.error) {
-    return { grid: null, error: data.message || "Wind forecast unavailable" };
+    return { series: null, error: data.message || "Wind unavailable" };
   }
-  return { grid: data };
+  if (!data.times?.length) {
+    return { series: null, error: "Wind series empty" };
+  }
+  return { series: data };
+}
+
+/** @deprecated Use fetchWindArea */
+export const fetchWindSeries = fetchWindArea;
+
+/** Merge two WindSeries on the same grid (append/extend lazy days). */
+export function mergeSeries(a: WindSeries, b: WindSeries): WindSeries {
+  const eps = 1e-6;
+  const sameGrid =
+    a.nlat === b.nlat &&
+    a.nlon === b.nlon &&
+    Math.abs(a.lat0 - b.lat0) < eps &&
+    Math.abs(a.lon0 - b.lon0) < eps &&
+    Math.abs(a.dlat - b.dlat) < eps &&
+    Math.abs(a.dlon - b.dlon) < eps;
+  if (!sameGrid) return b;
+
+  const byTime = new Map<string, { u: number[]; v: number[]; speed_kn: number[] }>();
+  for (let i = 0; i < a.times.length; i++) {
+    byTime.set(a.times[i], {
+      u: a.u[i] ?? [],
+      v: a.v[i] ?? [],
+      speed_kn: a.speed_kn[i] ?? [],
+    });
+  }
+  for (let i = 0; i < b.times.length; i++) {
+    byTime.set(b.times[i], {
+      u: b.u[i] ?? [],
+      v: b.v[i] ?? [],
+      speed_kn: b.speed_kn[i] ?? [],
+    });
+  }
+  const times = Array.from(byTime.keys()).sort(
+    (x, y) => new Date(x).getTime() - new Date(y).getTime(),
+  );
+  return {
+    lat0: a.lat0,
+    lon0: a.lon0,
+    dlat: a.dlat,
+    dlon: a.dlon,
+    nlat: a.nlat,
+    nlon: a.nlon,
+    times,
+    u: times.map((t) => byTime.get(t)!.u),
+    v: times.map((t) => byTime.get(t)!.v),
+    speed_kn: times.map((t) => byTime.get(t)!.speed_kn),
+    model_id: b.model_id ?? a.model_id,
+    bbox: b.bbox ?? a.bbox,
+  };
+}
+
+/** Linear-in-time slice of a WindSeries into a single MeteoGrid. */
+export function sliceSeries(series: WindSeries, tUtc: string): MeteoGrid {
+  const tMs = new Date(tUtc).getTime();
+  const timesMs = series.times.map((t) => new Date(t).getTime());
+  const n = timesMs.length;
+
+  let k0 = 0;
+  if (tMs <= timesMs[0]) {
+    k0 = 0;
+  } else if (tMs >= timesMs[n - 1]) {
+    k0 = n - 1;
+  } else {
+    k0 = Math.max(0, timesMs.findIndex((tm) => tm > tMs) - 1);
+  }
+  const k1 = Math.min(n - 1, k0 + 1);
+
+  const t0 = timesMs[k0];
+  const t1 = timesMs[k1];
+  const ft = k0 === k1 || t1 === t0 ? 0 : (tMs - t0) / (t1 - t0);
+
+  const u0 = series.u[k0] ?? [];
+  const v0 = series.v[k0] ?? [];
+  const u1 = series.u[k1] ?? u0;
+  const v1 = series.v[k1] ?? v0;
+  const len = Math.min(u0.length, v0.length, u1.length || u0.length, v1.length || v0.length);
+
+  const u: number[] = new Array(len);
+  const v: number[] = new Array(len);
+  const speed_kn: number[] = new Array(len);
+  for (let i = 0; i < len; i++) {
+    const ui = (u0[i] ?? 0) * (1 - ft) + (u1[i] ?? 0) * ft;
+    const vi = (v0[i] ?? 0) * (1 - ft) + (v1[i] ?? 0) * ft;
+    u[i] = ui;
+    v[i] = vi;
+    speed_kn[i] = Math.hypot(ui, vi) * 1.943844;
+  }
+
+  return {
+    lat0: series.lat0,
+    lon0: series.lon0,
+    dlat: series.dlat,
+    dlon: series.dlon,
+    nlat: series.nlat,
+    nlon: series.nlon,
+    u,
+    v,
+    speed_kn,
+    t_utc: tUtc,
+    model_id: series.model_id,
+    bbox: series.bbox,
+  };
 }
 
 /** Bilinear sample u/v at lat/lon from a regular grid. */

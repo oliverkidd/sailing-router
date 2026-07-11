@@ -26,13 +26,11 @@ export function windyColor(twsKn: number): string {
 export const MODEL_COLORS: Record<string, string> = {
   gfs: "#ef4444",
   ecmwf: "#2dd4bf",
-  icon: "#f59e0b",
-  ukmo: "#60a5fa",
+  aifs: "#14b8a6",
   gem: "#a78bfa",
   icon_eu: "#fbbf24",
   icon_d2: "#fcd34d",
   arome: "#f472b6",
-  arpege: "#fb7185",
   arpege_eu: "#fda4af",
   harmonie: "#38bdf8",
 };

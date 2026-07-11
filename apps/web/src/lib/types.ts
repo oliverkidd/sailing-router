@@ -2,7 +2,15 @@
 
 export type LatLon = [number, number]; // [lat, lon] WGS84 degrees
 export type Maneuver = "none" | "tack" | "gybe" | "mark";
-export type ConnectorId = "open-meteo" | "dwd" | "ecmwf-open" | "meteofrance";
+export type ConnectorId =
+  | "ecmwf-ifs"
+  | "ecmwf-aifs"
+  | "dwd-icon"
+  | "noaa-gfs"
+  | "eccc-gem"
+  | "mf-arome"
+  | "mf-arpege"
+  | "knmi-harmonie";
 export type RoundingSide = "port" | "starboard" | "either";
 
 export interface Mark {

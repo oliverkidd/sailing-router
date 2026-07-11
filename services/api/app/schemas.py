@@ -18,7 +18,16 @@ from pydantic import BaseModel, Field
 LatLon = tuple[float, float]
 
 Maneuver = Literal["none", "tack", "gybe", "mark"]
-ConnectorId = Literal["open-meteo", "dwd", "ecmwf-open", "meteofrance"]
+ConnectorId = Literal[
+    "ecmwf-ifs",
+    "ecmwf-aifs",
+    "dwd-icon",
+    "noaa-gfs",
+    "eccc-gem",
+    "mf-arome",
+    "mf-arpege",
+    "knmi-harmonie",
+]
 RoundingSide = Literal["port", "starboard", "either"]
 
 

@@ -27,7 +27,7 @@ export default function MapControls({
   return (
     <div className="map-controls">
       <button type="button" style={btn(toggles.showWind)} onClick={() => onChange({ showWind: !toggles.showWind })}>
-        Wind
+        Show wind
       </button>
     </div>
   );

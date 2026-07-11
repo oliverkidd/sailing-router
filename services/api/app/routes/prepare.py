@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, timedelta
 
 from fastapi import APIRouter
 
-from ..config import GEO_CACHE_DIR, MODEL_PRESETS_BY_ID
+from ..config import GEO_CACHE_DIR
+from ..field_service import get_area_field
 from ..geo import course_bbox
 from ..geo.fetch import ensure_geo_context
-from ..metocean_service import (
-    _DISPLAY_FALLBACKS,
-    _MODEL_FALLBACKS,
-    _cache_covers_horizon,
-    fetch_wind,
-    load_wind,
-)
 from ..schemas import (
     BBox,
     Course,
@@ -23,7 +18,6 @@ from ..schemas import (
     CoursePrepareRequest,
     CoursePrepareResponse,
 )
-from ..util.bbox import align_tile_bbox, route_grid_dims
 from ..util.horizon import routing_horizon_h
 
 logger = logging.getLogger(__name__)
@@ -54,43 +48,22 @@ def _prepare_geo(course: Course, bbox: BBox) -> str:
         return "error"
 
 
-def _fetch_wind(model_id: str, bbox: BBox, horizon_h: int) -> CoursePrepareModelStatus:
-    preset = MODEL_PRESETS_BY_ID.get(model_id)
-    if preset is None:
-        return CoursePrepareModelStatus(model_id=model_id, status="error", message="unknown model")
-
-    snapped = align_tile_bbox(bbox)
-    dims = route_grid_dims(snapped, preset.resolution_deg)
-    chain = (model_id, *_MODEL_FALLBACKS.get(model_id, _DISPLAY_FALLBACKS))
-    last_error: str | None = None
-
-    for mid in chain:
-        mid_preset = MODEL_PRESETS_BY_ID.get(mid)
-        mid_dims = (
-            route_grid_dims(snapped, mid_preset.resolution_deg) if mid_preset else dims
+def _fetch_wind(model_id: str, bbox: BBox, course: Course, horizon_h: int) -> CoursePrepareModelStatus:
+    depart = course.depart_utc
+    if depart.tzinfo is None:
+        depart = depart.replace(tzinfo=UTC)
+    end = depart + timedelta(hours=horizon_h)
+    field = get_area_field(model_id, bbox, start=depart, end=end)
+    if field is None:
+        return CoursePrepareModelStatus(
+            model_id=model_id,
+            status="error",
+            message="wind unavailable",
         )
-        existing = load_wind(mid, snapped, dims=mid_dims)
-        if existing is not None and _cache_covers_horizon(existing, horizon_h):
-            msg = f"using {mid} as substitute" if mid != model_id else None
-            return CoursePrepareModelStatus(
-                model_id=model_id, status="cached", n_times=existing.n_times, message=msg
-            )
-
-        try:
-            field = fetch_wind(mid, snapped, horizon_h=horizon_h, grid_shape=mid_dims)
-            msg = f"fetched via {mid} fallback" if mid != model_id else None
-            return CoursePrepareModelStatus(
-                model_id=model_id, status="fetched", n_times=field.n_times, message=msg
-            )
-        except Exception as exc:  # noqa: BLE001
-            last_error = str(exc)
-            logger.warning("prepare wind %s failed: %s", mid, exc)
-            continue
-
     return CoursePrepareModelStatus(
         model_id=model_id,
-        status="error",
-        message=last_error or "Open-Meteo forecast request failed",
+        status="fetched",
+        n_times=field.n_times,
     )
 
 
@@ -101,7 +74,7 @@ def prepare_course(req: CoursePrepareRequest) -> CoursePrepareResponse:
     geo_status = _prepare_geo(req.course, bbox)
 
     models: list[CoursePrepareModelStatus] = [
-        _fetch_wind(model_id, bbox, horizon_h) for model_id in req.model_ids
+        _fetch_wind(model_id, bbox, req.course, horizon_h) for model_id in req.model_ids
     ]
 
     return CoursePrepareResponse(

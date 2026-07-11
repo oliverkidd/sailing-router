@@ -26,43 +26,46 @@ export class WindArrowLayer {
   private fadeTimer: ReturnType<typeof setTimeout> | null = null;
   private hasData = false;
 
-  attach(map: maplibregl.Map) {
+  attach(map: maplibregl.Map, beforeId?: string) {
     this.map = map;
     if (!map.getSource(SOURCE_ID)) {
       map.addSource(SOURCE_ID, { type: "geojson", data: EMPTY });
-      map.addLayer({
-        id: LAYER_ID,
-        type: "symbol",
-        source: SOURCE_ID,
-        layout: {
-          "icon-image": ICON_ID,
-          "icon-size": [
-            "interpolate",
-            ["linear"],
-            ["get", "speed"],
-            0,
-            0.35,
-            10,
-            0.45,
-            25,
-            0.55,
-            40,
-            0.65,
-          ],
-          "icon-rotate": ["get", "bearing"],
-          "icon-rotation-alignment": "map",
-          "icon-allow-overlap": true,
-          "icon-ignore-placement": true,
+      map.addLayer(
+        {
+          id: LAYER_ID,
+          type: "symbol",
+          source: SOURCE_ID,
+          layout: {
+            "icon-image": ICON_ID,
+            "icon-size": [
+              "interpolate",
+              ["linear"],
+              ["get", "speed"],
+              0,
+              0.35,
+              10,
+              0.45,
+              25,
+              0.55,
+              40,
+              0.65,
+            ],
+            "icon-rotate": ["get", "bearing"],
+            "icon-rotation-alignment": "map",
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+          },
+          paint: {
+            "icon-opacity": 0,
+            "icon-opacity-transition": { duration: FADE_MS },
+          } as maplibregl.SymbolLayerSpecification["paint"],
         },
-        paint: {
-          "icon-opacity": 0,
-          "icon-opacity-transition": { duration: FADE_MS },
-        } as maplibregl.SymbolLayerSpecification["paint"],
-      });
+        beforeId,
+      );
     }
   }
 
-  setGrid(grid: MeteoGrid | null) {
+  setGrid(grid: MeteoGrid | null, opts?: { immediate?: boolean }) {
     this.grid = grid;
     const map = this.map;
     if (!map || !map.getSource(SOURCE_ID)) return;
@@ -86,6 +89,12 @@ export class WindArrowLayer {
       this.hasData = true;
       requestAnimationFrame(() => this.setOpacity(0.9));
     };
+
+    // Playback / scrubbing: swap immediately so arrows keep up with the handle.
+    if (opts?.immediate) {
+      apply();
+      return;
+    }
 
     // Fade out existing arrows before swapping; first paint skips the wait.
     this.setOpacity(0);

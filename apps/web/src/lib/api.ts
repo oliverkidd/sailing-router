@@ -67,6 +67,18 @@ export const api = {
     });
     return req<ModelPreset[]>(`/models/available?${q}`);
   },
+  windArea: (bbox: MapBounds, modelId: string, startUtc: string, endUtc: string) => {
+    const q = new URLSearchParams({
+      lat_min: String(bbox.lat_min),
+      lon_min: String(bbox.lon_min),
+      lat_max: String(bbox.lat_max),
+      lon_max: String(bbox.lon_max),
+      model_id: modelId,
+      start_utc: startUtc,
+      end_utc: endUtc,
+    });
+    return req<Record<string, unknown>>(`/wind/area?${q}`);
+  },
   route: (body: RouteRequest) =>
     req<RouteResponse>("/route", { method: "POST", body: JSON.stringify(body) }),
   prepareCourse: (body: CoursePrepareRequest) =>

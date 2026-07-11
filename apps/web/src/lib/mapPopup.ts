@@ -1,4 +1,4 @@
-/** Format map click inspect popup HTML. */
+/** Format map click inspect popup HTML — HUD-style gauges matching InstrumentCluster. */
 
 export interface PointInspect {
   lat: number;
@@ -17,32 +17,54 @@ export function compassLabel(deg: number): string {
   return CARDINALS[i];
 }
 
-function fmt(n: number | null | undefined, digits = 1, unit = ""): string {
+function fmtNum(n: number | null | undefined, digits = 1): string {
   if (n == null || Number.isNaN(n)) return "—";
-  return `${n.toFixed(digits)}${unit}`;
+  return n.toFixed(digits);
+}
+
+function terrainGauge(data: PointInspect): { label: string; value: string; unit: string } {
+  const onLand = data.on_land === true;
+  if (onLand) {
+    return { label: "Elev", value: fmtNum(data.elevation_m, 0), unit: "m" };
+  }
+  if (data.depth_m != null) {
+    return { label: "Depth", value: fmtNum(data.depth_m, 1), unit: "m" };
+  }
+  if (data.elevation_m != null && data.elevation_m < 0) {
+    return { label: "Depth", value: fmtNum(-data.elevation_m, 1), unit: "m" };
+  }
+  return { label: "Elev", value: fmtNum(data.elevation_m, 0), unit: "m" };
 }
 
 export function formatPointPopup(data: PointInspect): string {
-  const onLand = data.on_land === true;
-  const terrain =
-    onLand
-      ? `Elev: ${fmt(data.elevation_m, 0, " m")}`
-      : data.depth_m != null
-        ? `Depth: ${fmt(data.depth_m, 1, " m")}`
-        : data.elevation_m != null && data.elevation_m < 0
-          ? `Depth: ${fmt(-data.elevation_m, 1, " m")}`
-          : `Elev: ${fmt(data.elevation_m, 0, " m")}`;
+  const terrain = terrainGauge(data);
+  const twd = data.twd != null && !Number.isNaN(data.twd) ? ((data.twd % 360) + 360) % 360 : null;
+  const tws = data.tws != null && !Number.isNaN(data.tws) ? data.tws : null;
+  const twdLabel = twd != null ? `${Math.round(twd)}` : "—";
+  const compass = twd != null ? compassLabel(twd) : "";
 
-  const wind =
-    data.tws != null
-      ? `Wind: ${fmt(data.tws, 1, " kn")}${
-          data.twd != null ? ` · ${fmt(data.twd, 0)}° ${compassLabel(data.twd)}` : ""
-        }`
-      : "Wind: —";
-
-  return `<div style="font:12px/1.45 system-ui,sans-serif;color:#111;min-width:140px">
-    <div style="opacity:.65;margin-bottom:4px">${data.lat.toFixed(3)}, ${data.lon.toFixed(3)}</div>
-    <div><strong>${wind}</strong></div>
-    <div>${terrain}</div>
+  return `<div class="map-click-hud">
+    <div class="map-click-hud-coords">${data.lat.toFixed(3)}, ${data.lon.toFixed(3)}</div>
+    <div class="instrument-cluster map-click-hud-gauges">
+      <div class="gauge">
+        <span class="gauge-label">TWS</span>
+        <span class="gauge-value">${tws != null ? tws.toFixed(1) : "—"}</span>
+        <span class="gauge-unit">kn</span>
+      </div>
+      <div class="gauge gauge-dial">
+        <span class="gauge-label">TWD</span>
+        <div class="dial-wrap">
+          <div class="dial-ring"></div>
+          ${twd != null ? `<div class="dial-arrow" style="transform:rotate(${twd}deg)"></div>` : ""}
+          <span class="dial-readout">${twdLabel}°</span>
+        </div>
+        ${compass ? `<span class="gauge-unit">${compass}</span>` : `<span class="gauge-unit"> </span>`}
+      </div>
+      <div class="gauge">
+        <span class="gauge-label">${terrain.label}</span>
+        <span class="gauge-value">${terrain.value}</span>
+        <span class="gauge-unit">${terrain.unit}</span>
+      </div>
+    </div>
   </div>`;
 }

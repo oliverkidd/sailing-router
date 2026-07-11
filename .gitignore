@@ -37,8 +37,13 @@ data/forecast/*.zarr/
 
 # Large coastline downloads (make fetch-geo)
 data/geo/gshhg/
+data/geo/osm/
 data/geo/*.zip
 data/geo/ne_*.geojson
+# Intermediate tile-build workspace + generated chart tiles (build with `make tiles`)
+data/geo/bathymetry/
+data/cache/tiles_build/
+apps/web/public/geo/*.pmtiles
 
 # OS
 .DS_Store

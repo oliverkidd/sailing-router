@@ -5,11 +5,16 @@ import type { PolarCurve } from "@/lib/types";
 
 // Simple SVG polar plot: TWA on a half-circle (0 up = into wind), one curve per
 // TWS ring. Boat speed maps to radius.
-export default function PolarDiagram({ curve }: { curve: PolarCurve | null }) {
-  const size = 260;
+export default function PolarDiagram({
+  curve,
+  size = 160,
+}: {
+  curve: PolarCurve | null;
+  size?: number;
+}) {
   const cx = size / 2;
   const cy = size / 2;
-  const r = size / 2 - 16;
+  const r = size / 2 - 12;
 
   const maxSpeed = useMemo(() => {
     if (!curve) return 1;
@@ -53,10 +58,10 @@ export default function PolarDiagram({ curve }: { curve: PolarCurve | null }) {
           />
         );
       })}
-      <text x={cx} y={14} fill="#8fa3bf" fontSize={10} textAnchor="middle">
+      <text x={cx} y={12} fill="#8fa3bf" fontSize={9} textAnchor="middle">
         into wind
       </text>
-      <text x={cx} y={size - 4} fill="#8fa3bf" fontSize={10} textAnchor="middle">
+      <text x={cx} y={size - 3} fill="#8fa3bf" fontSize={9} textAnchor="middle">
         {maxSpeed.toFixed(1)} kn max
       </text>
     </svg>

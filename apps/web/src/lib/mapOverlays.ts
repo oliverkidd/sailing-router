@@ -1,6 +1,6 @@
 /** Shared map overlay helpers. */
 
-import type { Course } from "./types";
+import type { Course, LatLon, RouteLeg } from "./types";
 
 export interface MapBounds {
   lat_min: number;
@@ -64,13 +64,101 @@ export function currentForecastHourUtc(): string {
   return d.toISOString();
 }
 
+/** If depart is missing or in the past, bump to the current UTC hour. */
+export function ensureFutureDepart(departUtc: string, now = new Date()): string {
+  const t = new Date(departUtc).getTime();
+  if (Number.isNaN(t) || t < now.getTime()) {
+    return currentForecastHourUtc();
+  }
+  return departUtc;
+}
+
 export function emptyCourse(departUtc: string): Course {
   return {
     start: [0, 0],
     finish: [0, 0],
     marks: [],
     exclusions: [],
-    depart_utc: departUtc,
+    depart_utc: ensureFutureDepart(departUtc),
     min_depth_m: 3,
+  };
+}
+
+export interface LegAtTime {
+  position: LatLon;
+  heading: number | null;
+  leg: RouteLeg;
+  index: number;
+}
+
+/** Interpolate boat state between route legs at an absolute UTC time. */
+export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
+  if (!legs.length) return null;
+  const tMs = new Date(tUtc).getTime();
+  if (Number.isNaN(tMs)) {
+    const leg = legs[0];
+    return {
+      position: leg.position,
+      heading: leg.cog ?? leg.heading ?? null,
+      leg,
+      index: 0,
+    };
+  }
+
+  if (tMs <= new Date(legs[0].t_utc).getTime()) {
+    const leg = legs[0];
+    return {
+      position: leg.position,
+      heading: leg.cog ?? leg.heading ?? null,
+      leg,
+      index: 0,
+    };
+  }
+  const last = legs.length - 1;
+  if (tMs >= new Date(legs[last].t_utc).getTime()) {
+    const leg = legs[last];
+    return {
+      position: leg.position,
+      heading: leg.cog ?? leg.heading ?? null,
+      leg,
+      index: last,
+    };
+  }
+
+  let i0 = 0;
+  for (let i = 0; i < last; i++) {
+    if (new Date(legs[i + 1].t_utc).getTime() >= tMs) {
+      i0 = i;
+      break;
+    }
+  }
+  const a = legs[i0];
+  const b = legs[i0 + 1];
+  const t0 = new Date(a.t_utc).getTime();
+  const t1 = new Date(b.t_utc).getTime();
+  const ft = t1 === t0 ? 0 : (tMs - t0) / (t1 - t0);
+  const position: LatLon = [
+    a.position[0] + (b.position[0] - a.position[0]) * ft,
+    a.position[1] + (b.position[1] - a.position[1]) * ft,
+  ];
+  const lerp = (x: number, y: number) => x + (y - x) * ft;
+  const leg: RouteLeg = {
+    ...a,
+    t_utc: tUtc,
+    position,
+    tws: lerp(a.tws, b.tws),
+    twd: a.twd,
+    twa: lerp(a.twa, b.twa),
+    heading: a.heading,
+    bsp: lerp(a.bsp, b.bsp),
+    sog: lerp(a.sog, b.sog),
+    cog: a.cog,
+    maneuver: "none",
+  };
+  return {
+    position,
+    heading: a.cog ?? a.heading ?? null,
+    leg,
+    index: i0,
   };
 }

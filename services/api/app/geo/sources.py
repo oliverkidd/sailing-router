@@ -140,13 +140,33 @@ def _load_gshhg_index() -> None:
     logger.info("GSHHG index ready: %d land polygons", len(polys))
 
 
-def gshhg_land(bbox: BBox) -> list[Polygon]:
-    """Return land polygons clipped to bbox from bundled GSHHG high-res coastlines."""
+class GshhgMissingError(RuntimeError):
+    """Raised when the chart baseline requires GSHHG but it is not installed."""
+
+
+def require_gshhg() -> None:
+    """Fail fast if high-res coastline shapefile is absent."""
+    if not GSHHG_LAND_SHP.exists():
+        raise GshhgMissingError(
+            f"GSHHG coastline missing at {GSHHG_LAND_SHP}. "
+            "Run: python services/api/scripts/fetch_gshhg.py"
+        )
+
+
+def gshhg_land(bbox: BBox, *, allow_fallback: bool = True) -> list[Polygon]:
+    """Return land polygons clipped to bbox from bundled GSHHG high-res coastlines.
+
+    When ``allow_fallback`` is False (chart baseline), raise if GSHHG is missing
+    instead of silently substituting low-res Natural Earth.
+    """
     _load_gshhg_index()
     assert _gshhg_tree is not None
     assert _gshhg_polys is not None
 
     if not _gshhg_polys:
+        if not allow_fallback:
+            require_gshhg()
+            raise GshhgMissingError("GSHHG index empty")
         return _fallback_land(bbox)
 
     clip = box(bbox.lon_min, bbox.lat_min, bbox.lon_max, bbox.lat_max)
@@ -240,18 +260,27 @@ def _grid_from_raster(
     bounds: tuple[float, float, float, float] | None,
     bbox: BBox,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Map a north-up raster to ascending lat/lon coordinate axes."""
+    """Map a north-up raster to ascending lat/lon coordinate axes.
+
+    GeoTIFF / WCS coverages are north-up: row 0 is the northern edge.
+    We store ascending latitudes, so the array is flipped vertically when
+    bounds indicate a north-up raster.
+    """
     nrows, ncols = arr.shape
     if bounds is not None:
         west, south, east, north = bounds
-        lats = np.linspace(south, north, nrows)
+        # North-up raster: flip so index 0 matches southern latitude.
+        if north > south:
+            arr = np.flipud(arr)
+        lats = np.linspace(min(south, north), max(south, north), nrows)
         lons = np.linspace(west, east, ncols)
     else:
         lats = np.linspace(bbox.lat_min, bbox.lat_max, nrows)
         lons = np.linspace(bbox.lon_min, bbox.lon_max, ncols)
+        # If caller passed descending lat linspace, flip to ascending.
         if lats[0] > lats[-1]:
             arr = np.flipud(arr)
-            lats = lats[::-1]
+            lats = lats[::-1].copy()
     return lats, lons, arr
 
 

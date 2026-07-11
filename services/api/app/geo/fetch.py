@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -18,20 +19,33 @@ from . import (
 from .sources import (
     fetch_depth_grid,
     gshhg_land,
+    require_gshhg,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _bbox_key(bbox: BBox) -> str:
     return bbox.key()
 
 
-def fetch_land_for_bbox(bbox: BBox) -> LandMask:
+def fetch_land_for_bbox(bbox: BBox, *, require_hires: bool = False) -> LandMask:
     key = _bbox_key(bbox)
-    cached = GEO_CACHE_DIR / f"{key}_land.geojson"
-    if cached.exists():
-        return LandMask.from_geojson(cached)
+    # Chart baseline uses a dedicated cache file so it never mixes with NE fallbacks.
+    out_path = (
+        GEO_CACHE_DIR / f"{key}_land_chart.geojson"
+        if require_hires
+        else GEO_CACHE_DIR / f"{key}_land.geojson"
+    )
+    if out_path.exists():
+        return LandMask.from_geojson(out_path)
 
-    polys = gshhg_land(bbox)
+    if require_hires:
+        require_gshhg()
+        polys = gshhg_land(bbox, allow_fallback=False)
+    else:
+        polys = gshhg_land(bbox, allow_fallback=True)
+
     if not polys:
         return LandMask([])
 
@@ -43,9 +57,9 @@ def fetch_land_for_bbox(bbox: BBox) -> LandMask:
         }
         for p in polys
     ]
-    cached.parent.mkdir(parents=True, exist_ok=True)
-    cached.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
-    return LandMask.from_geojson(cached)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return LandMask.from_geojson(out_path)
 
 
 def fetch_depth_for_bbox(bbox: BBox, land: LandMask) -> DepthField:
@@ -64,7 +78,7 @@ def fetch_depth_for_bbox(bbox: BBox, land: LandMask) -> DepthField:
 
 def ensure_geo_context(course: Course, margin_deg: float = 0.5) -> GeoContext:
     bbox = course_bbox(course, margin_deg=margin_deg)
-    land = fetch_land_for_bbox(bbox)
+    land = fetch_land_for_bbox(bbox, require_hires=False)
     depth = fetch_depth_for_bbox(bbox, land)
     return GeoContext.build(
         land=land,
@@ -104,8 +118,15 @@ def _covering_depth_npz(lat: float, lon: float) -> Path | None:
 def _covering_land_geojson(lat: float, lon: float) -> Path | None:
     best: Path | None = None
     best_area = float("inf")
-    for land_path in GEO_CACHE_DIR.glob("*_land.geojson"):
-        bbox = _bbox_from_cache_stem(land_path.stem.removesuffix("_land"))
+    for land_path in GEO_CACHE_DIR.glob("*_land*.geojson"):
+        stem = land_path.stem
+        for suffix in ("_land_chart", "_land"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        else:
+            continue
+        bbox = _bbox_from_cache_stem(stem)
         if bbox is None:
             continue
         if lat < bbox.lat_min or lat > bbox.lat_max or lon < bbox.lon_min or lon > bbox.lon_max:
