@@ -26,11 +26,11 @@ body {
 
 #app-shell {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px 1fr auto;
   grid-template-rows: 1fr auto;
   grid-template-areas:
-    "rail map"
-    "rail compare";
+    "rail map detail"
+    "rail compare detail";
   height: 100vh;
   width: 100vw;
 }
@@ -88,6 +88,69 @@ button:hover:not(:disabled) {
   position: relative;
 }
 
+.map-controls {
+  position: absolute;
+  top: 12px;
+  right: 52px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.forecast-picker {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 90%;
+}
+
+.wind-legend {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 5;
+  width: min(280px, calc(100% - 160px));
+  padding: 8px 10px 6px;
+  border-radius: 8px;
+  background: rgba(17, 26, 43, 0.92);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.wind-legend-bar {
+  height: 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.wind-legend-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.wind-legend-label {
+  position: absolute;
+  right: 10px;
+  top: 6px;
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
 #map {
   position: absolute;
   inset: 0;
@@ -104,6 +167,209 @@ button:hover:not(:disabled) {
   gap: 16px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+
+.detail-panel {
+  grid-area: detail;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.detail-panel.collapsed {
+  width: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+.detail-panel.expanded {
+  width: 360px;
+  padding: 12px 16px;
+}
+
+.detail-tab {
+  writing-mode: vertical-rl;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.detail-header h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.detail-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.detail-tabs button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.detail-tabs button.active {
+  border-color: var(--accent);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 4px 8px;
+  font-size: 12px;
+  margin: 0;
+}
+
+.detail-grid dt {
+  color: var(--muted);
+  margin: 0;
+}
+
+.detail-grid dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.instrument-cluster {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  padding: 10px 8px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.map-instrument-cluster {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 5;
+  min-width: 280px;
+  pointer-events: none;
+}
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gauge-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+}
+
+.gauge-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.gauge-unit {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.gauge-dial .dial-wrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  margin-top: 2px;
+}
+
+.dial-ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+}
+
+.dial-arrow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  margin-left: -1px;
+  margin-top: -16px;
+  background: var(--accent);
+  transform-origin: bottom center;
+  border-radius: 1px;
+}
+
+.dial-readout {
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+  color: var(--text);
+}
+
+.playback-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.playback-bar button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
 }
 
 .status-dot {
@@ -128,4 +394,46 @@ button:hover:not(:disabled) {
   border-radius: 2px;
   margin-right: 6px;
   vertical-align: middle;
+}
+
+.maplibregl-popup.map-info-popup-wrap .maplibregl-popup-content {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.maplibregl-popup.map-info-popup-wrap .maplibregl-popup-tip {
+  border-top-color: var(--panel);
+}
+
+.map-info-popup {
+  font-size: 12px;
+  min-width: 200px;
+}
+
+.map-info-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.map-info-row {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 4px 8px;
+  margin-bottom: 3px;
+}
+
+.map-info-label {
+  color: var(--muted);
+}
+
+.map-info-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }

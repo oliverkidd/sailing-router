@@ -1,34 +1,23 @@
-"""Isochrone router: terrain-adjusted wind + current set-and-drift, one route per model.
-
-Run once per selected model using that model's (optionally terrain-downscaled)
-WindField and the shared CurrentField. See docs/build-plan.md §7.6 for the spec.
+"""Isochrone router: wind + leeway, one route per model.
 
 The frontier is expanded in fixed time steps; at each step every live node fans out
 over candidate headings, each producing a child node after applying the polar,
-leeway, current set-and-drift, and the land/depth/exclusion masks. The frontier is
-pruned three ways (bearing sector, grid cluster, hard cap) to stay bounded, then we
-backtrack parent pointers from the best finish node into a list of RouteLegs.
+leeway, and the land/depth/exclusion masks. The frontier is pruned three ways
+(bearing sector, grid cluster, hard cap) to stay bounded, then we backtrack parent
+pointers from the best finish node into a list of RouteLegs.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol
 
 from .boat import Boat
 from .geo import GeoContext, bearing, destination, distance_nm
-from .metocean import MS_TO_KN, WindField
+from .metocean import WindField
 from .navmath import magnitude_bearing, norm360, signed_diff, twa_from, vector
 from .schemas import Course, Mark, ModelRoute, RouteLeg
-
-KN_PER_MS = MS_TO_KN
-
-
-class CurrentSampler(Protocol):
-    def current_at(self, lat: float, lon: float, t: datetime) -> tuple[float, float]:
-        """Return (u, v) surface current in m/s (east, north)."""
-        ...
 
 
 @dataclass(slots=True)
@@ -44,8 +33,6 @@ class Node:
     twa: float = 0.0
     sog: float = 0.0
     cog: float = 0.0
-    cur_set: float = 0.0
-    cur_rate: float = 0.0
     maneuver: str = "none"
 
     @property
@@ -74,10 +61,18 @@ def _wind_side(heading: float, twd: float) -> float:
 def _detect_maneuver(parent: Node, heading: float, twd: float, twa: float) -> str:
     if parent.heading is None:
         return "none"
-    if _wind_side(parent.heading, parent.twd) == _wind_side(heading, twd):
+    ref_twd = parent.twd
+    if _wind_side(parent.heading, ref_twd) == _wind_side(heading, ref_twd):
         return "none"
-    # Wind crossed to the other side: upwind => tack, downwind => gybe.
+    if parent.maneuver in ("tack", "gybe"):
+        return "none"
     return "tack" if twa < 90.0 else "gybe"
+
+
+def _vmc_nm(node: Node, target: tuple[float, float]) -> float:
+    brg_to_tgt = bearing(node.pos, target)
+    angle = abs(signed_diff(brg_to_tgt, node.cog))
+    return node.sog * max(0.0, math.cos(math.radians(angle)))
 
 
 def _advance(lat: float, lon: float, gx: float, gy: float, dt_s: float) -> tuple[float, float]:
@@ -95,34 +90,27 @@ class IsochroneRouter:
         boat: Boat,
         wind: WindField,
         geo: GeoContext,
-        current: CurrentSampler | None,
         params: RouterParams,
-        use_currents: bool = True,
     ):
         self.boat = boat
         self.wind = wind
         self.geo = geo
-        self.current = current if use_currents else None
         self.p = params
         self._headings = [
             h * params.heading_step_deg
             for h in range(int(round(360.0 / params.heading_step_deg)))
         ]
 
-    # --- pruning ------------------------------------------------------------
-
     def _prune(self, nodes: list[Node], target: tuple[float, float]) -> list[Node]:
         if not nodes:
             return nodes
-        # 1) best (closest to target) per bearing sector.
         by_sector: dict[int, Node] = {}
         for n in nodes:
             sec = int(bearing(target, n.pos) // self.p.sector_width_deg)
             cur = by_sector.get(sec)
-            if cur is None or distance_nm(n.pos, target) < distance_nm(cur.pos, target):
+            if cur is None or _vmc_nm(n, target) > _vmc_nm(cur, target):
                 by_sector[sec] = n
         kept = list(by_sector.values())
-        # 2) best per grid cell.
         by_cell: dict[tuple[int, int], Node] = {}
         for n in kept:
             cell = (
@@ -130,16 +118,13 @@ class IsochroneRouter:
                 int(n.lon / self.p.cluster_cell_deg),
             )
             cur = by_cell.get(cell)
-            if cur is None or distance_nm(n.pos, target) < distance_nm(cur.pos, target):
+            if cur is None or _vmc_nm(n, target) > _vmc_nm(cur, target):
                 by_cell[cell] = n
         kept = list(by_cell.values())
-        # 3) hard cap: keep the closest max_frontier to target.
         if len(kept) > self.p.max_frontier:
-            kept.sort(key=lambda n: distance_nm(n.pos, target))
+            kept.sort(key=lambda n: _vmc_nm(n, target), reverse=True)
             kept = kept[: self.p.max_frontier]
         return kept
-
-    # --- expansion ----------------------------------------------------------
 
     def _expand_leg(
         self, frontier: list[Node], target: Mark
@@ -156,12 +141,6 @@ class IsochroneRouter:
                     continue
                 any_wind = True
                 tws, twd = w
-                if self.current is not None:
-                    cu, cv = self.current.current_at(node.lat, node.lon, node.t)
-                else:
-                    cu, cv = 0.0, 0.0
-                cur_rate, cur_set = magnitude_bearing(cu * KN_PER_MS, cv * KN_PER_MS)
-                cdf = self.boat.config.current_drift_factor
 
                 for heading in self._headings:
                     twa = twa_from(heading, twd)
@@ -177,17 +156,15 @@ class IsochroneRouter:
 
                     ctw = heading + self.boat.leeway_offset(tws, bsp, twd, heading)
                     vx, vy = vector(norm360(ctw), bsp)
-                    gx = vx + cu * KN_PER_MS * cdf
-                    gy = vy + cv * KN_PER_MS * cdf
                     eff_dt = max(0.0, step - pen)
-                    nlat, nlon = _advance(node.lat, node.lon, gx, gy, eff_dt)
+                    nlat, nlon = _advance(node.lat, node.lon, vx, vy, eff_dt)
 
                     if self.geo.blocked_segment(node.pos, (nlat, nlon)):
                         continue
                     if self.geo.blocked_point((nlat, nlon)):
                         continue
 
-                    sog, cog = magnitude_bearing(gx, gy)
+                    sog, cog = magnitude_bearing(vx, vy)
                     nxt.append(
                         Node(
                             lat=nlat,
@@ -201,14 +178,12 @@ class IsochroneRouter:
                             twa=twa,
                             sog=sog,
                             cog=cog,
-                            cur_set=cur_set,
-                            cur_rate=cur_rate,
                             maneuver=maneuver,
                         )
                     )
 
             if not any_wind:
-                return None, True  # forecast exhausted for all nodes
+                return None, True
 
             frontier = self._prune(nxt, tgt)
             if not frontier:
@@ -218,15 +193,12 @@ class IsochroneRouter:
             if arrivals:
                 return min(arrivals, key=lambda n: n.t), False
 
-        return None, False  # ran out of steps
-
-    # --- driver -------------------------------------------------------------
+        return None, False
 
     def route(self, course: Course, model_id: str) -> ModelRoute:
         depart = course.depart_utc
         start_node = Node(lat=course.start[0], lon=course.start[1], t=depart)
 
-        # Course legs: start -> each mark -> finish.
         targets: list[Mark] = list(course.marks)
         targets.append(Mark(position=course.finish, radius_nm=0.2, rounding="either", name="finish"))
 
@@ -240,7 +212,7 @@ class IsochroneRouter:
                 exhausted = exh
                 break
             last_arrival = arrival
-            frontier = [arrival]  # restart expansion from the rounded mark
+            frontier = [arrival]
 
         legs = self._backtrack(start_node, last_arrival)
         n_tacks = sum(1 for leg in legs if leg.maneuver == "tack")
@@ -285,8 +257,6 @@ class IsochroneRouter:
                     bsp=round(node.bsp, 2),
                     sog=round(node.sog, 2),
                     cog=round(node.cog, 1),
-                    cur_set_deg=round(node.cur_set, 1),
-                    cur_rate_kn=round(node.cur_rate, 2),
                     maneuver=node.maneuver if node.maneuver in ("none", "tack", "gybe", "mark") else "none",  # type: ignore[arg-type]
                 )
             )

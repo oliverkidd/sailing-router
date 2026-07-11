@@ -1,12 +1,13 @@
-"""FastAPI entrypoint. Endpoints are wired milestone-by-milestone.
+"""FastAPI entrypoint.
 
-API contract (spec §8):
+API contract:
     POST /boat             -> validated BoatConfig + polar_id
     GET  /models           -> list[ModelPreset]
-    POST /forecasts/fetch  -> per-model status + cache keys
-    POST /currents/fetch   -> status + cache key
+    GET  /models/available -> models covering a bbox
+    GET  /wind/grid        -> LOD wind tile (single time)
+    POST /course/prepare   -> prefetch wind + geo for a course
     POST /route            -> RouteResponse (one ModelRoute per model)
-    GET  /elevation        -> {elevation_m}
+    GET  /elevation        -> {elevation_m, depth_m, on_land}
     GET  /health
 """
 
@@ -16,16 +17,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
-from .config import MODEL_PRESETS, REGION_BBOX
-from .schemas import ModelPreset
 
 app = FastAPI(
     title="Sailing Weather Router",
     version=__version__,
-    description="Local-first UK + Mediterranean static route planner. No US systems.",
+    description="Local-first sailing weather router with LOD wind tiles.",
 )
 
-# Local-first dev: allow the Next.js dev server.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -36,22 +34,23 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": __version__, "region": REGION_BBOX}
+    return {
+        "status": "ok",
+        "version": __version__,
+        "coverage": "global",
+    }
 
 
-@app.get("/models", response_model=list[ModelPreset])
-def get_models() -> list[ModelPreset]:
-    """The European model presets (+ colors) offered in the UI."""
-    return MODEL_PRESETS
-
-
-# Endpoints added in later milestones:
 from .routes import boat as _boat_routes  # noqa: E402
 from .routes import forecast as _forecast_routes  # noqa: E402
 from .routes import geo as _geo_routes  # noqa: E402
+from .routes import models as _models_routes  # noqa: E402
+from .routes import prepare as _prepare_routes  # noqa: E402
 from .routes import route as _route_routes  # noqa: E402
 
+app.include_router(_models_routes.router)
 app.include_router(_boat_routes.router)
 app.include_router(_forecast_routes.router)
 app.include_router(_geo_routes.router)
+app.include_router(_prepare_routes.router)
 app.include_router(_route_routes.router)

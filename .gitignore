@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+**/.venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -34,10 +35,23 @@ data/currents/*.nc
 data/forecast/*.nc
 data/forecast/*.zarr/
 
+# Large coastline downloads (make fetch-geo)
+data/geo/gshhg/
+data/geo/*.zip
+data/geo/ne_*.geojson
+
 # OS
 .DS_Store
 Thumbs.db
 
-# Editor
+# Editor / IDE / agent tooling
 .idea/
 .vscode/
+.cursor/
+**/.cursor/
+*.swp
+*.swo
+
+# Logs & debug dumps
+*.log
+.debug/

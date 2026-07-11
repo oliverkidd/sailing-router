@@ -1,0 +1,19 @@
+{
+  "name": "sailing-router",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/web"],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "setup": "node scripts/setup.mjs",
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:docker": "docker compose up --build",
+    "build": "npm run build --workspace apps/web",
+    "typecheck": "npm run typecheck --workspace apps/web",
+    "lint": "cd services/api && .venv/bin/ruff check app",
+    "fixtures": "cd services/api && .venv/bin/python -m app.tools.fetch_fixtures"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

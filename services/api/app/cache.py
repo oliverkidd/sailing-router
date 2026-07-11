@@ -1,30 +1,36 @@
-"""Local disk cache for metocean fields (local-first: fetch ashore, route offline).
-
-WindFields are cached to .npz keyed by (model_id, bbox_hash, cycle). CurrentFields
-(M5) reuse the same directory layout. TODO(v2): NetCDF/zarr for interoperability.
-"""
+"""Local disk cache for WindFields (local-first: fetch ashore, route offline)."""
 
 from __future__ import annotations
 
 import hashlib
+import time
 from pathlib import Path
 
 from .config import CACHE_DIR
-from .metocean import CurrentField, WindField
+from .metocean import WindField
 from .schemas import BBox
 
 _WIND_DIR = CACHE_DIR / "forecast"
-_CURRENT_DIR = CACHE_DIR / "currents"
 _WIND_DIR.mkdir(parents=True, exist_ok=True)
-_CURRENT_DIR.mkdir(parents=True, exist_ok=True)
+
+WIND_TTL_S = 3 * 3600
 
 
 def _bbox_hash(bbox: BBox) -> str:
     return hashlib.sha1(bbox.key().encode()).hexdigest()[:10]
 
 
-def wind_key(model_id: str, bbox: BBox, cycle: str | None) -> str:
-    return f"{model_id}__{_bbox_hash(bbox)}__{cycle or 'latest'}"
+def wind_key(
+    model_id: str,
+    bbox: BBox,
+    cycle: str | None,
+    *,
+    dims: tuple[int, int] | None = None,
+) -> str:
+    base = f"{model_id}__{_bbox_hash(bbox)}__{cycle or 'latest'}"
+    if dims is not None:
+        return f"{base}__{dims[0]}x{dims[1]}"
+    return base
 
 
 def wind_path(key: str) -> Path:
@@ -33,6 +39,13 @@ def wind_path(key: str) -> Path:
 
 def has_wind(key: str) -> bool:
     return wind_path(key).exists()
+
+
+def wind_is_fresh(key: str, ttl_s: float = WIND_TTL_S) -> bool:
+    path = wind_path(key)
+    if not path.exists():
+        return False
+    return (time.time() - path.stat().st_mtime) < ttl_s
 
 
 def save_wind(key: str, field: WindField) -> str:
@@ -48,11 +61,7 @@ def load_wind(key: str) -> WindField:
 
 
 def find_covering_wind(model_id: str, bbox: BBox) -> WindField | None:
-    """Return any cached WindField for this model whose grid covers `bbox`.
-
-    Lets a broadly pre-fetched region (e.g. via `make fetch-fixtures`) serve any
-    course contained within it — the core of the "fetch ashore, race offline" flow.
-    """
+    """Return any cached WindField for this model whose grid covers `bbox`."""
     prefix = f"{model_id}__"
     for path in sorted(_WIND_DIR.glob(f"{prefix}*.npz")):
         try:
@@ -69,25 +78,25 @@ def find_covering_wind(model_id: str, bbox: BBox) -> WindField | None:
     return None
 
 
-def current_key(source: str, bbox: BBox, window_start: str) -> str:
-    return f"{source}__{_bbox_hash(bbox)}__{window_start}"
-
-
-def current_path(key: str) -> Path:
-    return _CURRENT_DIR / f"{key}.npz"
-
-
-def has_current(key: str) -> bool:
-    return current_path(key).exists()
-
-
-def save_current(key: str, field: CurrentField) -> str:
-    field.save_npz(current_path(key))
-    return key
-
-
-def load_current(key: str) -> CurrentField:
-    path = current_path(key)
-    if not path.exists():
-        raise KeyError(f"No cached CurrentField for key {key}")
-    return CurrentField.load_npz(path)
+def find_overlapping_wind(model_id: str, bbox: BBox) -> WindField | None:
+    """Return cached wind whose grid overlaps the query bbox (for map overlays)."""
+    prefix = f"{model_id}__"
+    best: WindField | None = None
+    best_area = float("inf")
+    for path in sorted(_WIND_DIR.glob(f"{prefix}*.npz")):
+        try:
+            wf = WindField.load_npz(path)
+        except Exception:  # noqa: BLE001
+            continue
+        if (
+            wf.lats[-1] < bbox.lat_min
+            or wf.lats[0] > bbox.lat_max
+            or wf.lons[-1] < bbox.lon_min
+            or wf.lons[0] > bbox.lon_max
+        ):
+            continue
+        area = (wf.lats[-1] - wf.lats[0]) * (wf.lons[-1] - wf.lons[0])
+        if area < best_area:
+            best_area = area
+            best = wf
+    return best

@@ -13,7 +13,6 @@ const DEFAULT_CONFIG: BoatConfig = {
   downwind_twa_deg: null,
   leeway_coeff: 0,
   leeway_max_deg: 8,
-  current_drift_factor: 1,
   polar_efficiency: 1,
 };
 
@@ -112,12 +111,12 @@ export default function BoatConfigPanel({
           marginBottom: 8,
         }}
       >
-        Upload polar CSV
+        Upload polar (.pol or CSV)
       </button>
       <input
         ref={fileRef}
         type="file"
-        accept=".csv,.txt"
+        accept=".pol,.csv,.txt"
         style={{ display: "none" }}
         onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
       />
@@ -128,7 +127,6 @@ export default function BoatConfigPanel({
       <NumberRow label="Downwind TWA°" value={config.downwind_twa_deg} placeholder="auto" onChange={(v) => set({ downwind_twa_deg: v })} />
       <NumberRow label="Leeway coeff" value={config.leeway_coeff} step={0.1} onChange={(v) => set({ leeway_coeff: v ?? 0 })} />
       <NumberRow label="Leeway max°" value={config.leeway_max_deg} onChange={(v) => set({ leeway_max_deg: v ?? 0 })} />
-      <NumberRow label="Current factor" value={config.current_drift_factor} step={0.1} onChange={(v) => set({ current_drift_factor: v ?? 0 })} />
       <NumberRow label="Polar efficiency" value={config.polar_efficiency} step={0.05} onChange={(v) => set({ polar_efficiency: v ?? 1 })} />
 
       {status && <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 6 }}>{status}</div>}

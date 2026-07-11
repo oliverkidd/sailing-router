@@ -1,22 +1,4 @@
-"""Polar table parsing + interpolation.
-
-Polar CSV in ORC / Expedition format: the first row is a header of TWA angles
-(its first cell is an ignored label), and each subsequent row starts with a TWS
-value followed by boat speeds (knots) for each TWA.
-
-    twa/tws , 40 , 52 , 60 , 75 , 90 , 110 , 120 , 135 , 150 , 165 , 180
-    6       , 0  , 5.1, 5.6, 6.0, 6.1, 6.0 , 5.9 , 5.4 , 4.7 , 3.9 , 3.4
-    8       , 0  , 6.0, 6.6, 7.1, 7.2, 7.1 , 7.0 , 6.4 , 5.7 , 4.9 , 4.3
-    ...
-
-Delimiters comma / semicolon / tab / whitespace are all accepted.
-
-Conventions:
-- TWA is 0..180 (symmetric port/starboard); speeds in knots.
-- `speed_for(tws, twa)` clamps to the axes and bilinearly interpolates.
-- No-go returns 0: below the upwind limit or above the deep-run limit the polar
-  cells are themselves 0, and any non-positive interpolation is clamped to 0.
-"""
+"""Polar table parsing + interpolation."""
 
 from __future__ import annotations
 
@@ -27,22 +9,68 @@ from dataclasses import dataclass
 import numpy as np
 
 _DELIM = re.compile(r"[,;\t]|\s{2,}| +")
+_HEADER_LABELS = {"twa/tws", "twa\\tws", "tws/twa", "twa", "tws", "angle", "speed"}
 
 
 def _split(line: str) -> list[str]:
     line = line.strip()
-    # Prefer explicit delimiters; fall back to whitespace.
     for delim in (",", ";", "\t"):
         if delim in line:
             return [c.strip() for c in line.split(delim)]
     return [c for c in re.split(r"\s+", line) if c != ""]
 
 
+def _is_numeric(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def _detect_format(text: str) -> str:
+    """Return 'matrix', 'pairwise', or 'unknown'."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("!")]
+    if not lines:
+        return "unknown"
+
+    first = _split(lines[0])
+    first_cell = first[0].lower().replace("\\", "/") if first else ""
+
+    # Matrix: header label in first cell (TWA/TWS, TWA\TWS, etc.) or non-numeric header row.
+    if first_cell in _HEADER_LABELS or (first and not _is_numeric(first[0])):
+        return "matrix"
+
+    # Pairwise Expedition: each line starts with TWS then (TWA, BSP) pairs.
+    numeric_lines = 0
+    pairwise_lines = 0
+    for ln in lines[:15]:
+        cells = _split(ln)
+        if len(cells) < 7:
+            continue
+        if not _is_numeric(cells[0]):
+            continue
+        numeric_lines += 1
+        # Odd count after TWS => pairs; even count after TWS => likely matrix row
+        rest = cells[1:]
+        if len(rest) % 2 == 0 and all(_is_numeric(c) for c in rest):
+            pairwise_lines += 1
+
+    if pairwise_lines >= 2 and pairwise_lines >= numeric_lines * 0.5:
+        return "pairwise"
+
+    # Default: if first row looks like header with numeric TWA columns, matrix.
+    if first and not _is_numeric(first[0]):
+        return "matrix"
+
+    return "matrix"
+
+
 @dataclass
 class PolarTable:
-    tws: np.ndarray  # shape (n_tws,), ascending
-    twa: np.ndarray  # shape (n_twa,), ascending, 0..180
-    speed: np.ndarray  # shape (n_tws, n_twa), knots
+    tws: np.ndarray
+    twa: np.ndarray
+    speed: np.ndarray
 
     @classmethod
     def from_csv(cls, text: str) -> PolarTable:
@@ -51,7 +79,6 @@ class PolarTable:
             raise ValueError("Polar CSV needs a header row and at least one data row")
 
         header = _split(rows[0])
-        # Header first cell is a label (e.g. "twa/tws"); the rest are TWA angles.
         twa = np.array([float(x) for x in header[1:]], dtype=float)
 
         tws_list: list[float] = []
@@ -74,27 +101,75 @@ class PolarTable:
                 f"Polar shape mismatch: got {speed.shape}, expected {(tws.size, twa.size)}"
             )
 
-        # Sort axes ascending (keeps interpolation simple).
         ti = np.argsort(tws)
         ai = np.argsort(twa)
-        tws, twa = tws[ti], twa[ai]
-        speed = speed[np.ix_(ti, ai)]
-
-        return cls(tws=tws, twa=twa, speed=speed)
+        return cls(tws=tws[ti], twa=twa[ai], speed=speed[np.ix_(ti, ai)])
 
     @classmethod
     def from_bytes(cls, data: bytes) -> PolarTable:
-        return cls.from_csv(io.TextIOWrapper(io.BytesIO(data), encoding="utf-8-sig").read())
+        text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8-sig").read()
+        fmt = _detect_format(text)
+        if fmt == "pairwise":
+            return cls.from_pol(text)
+        if fmt == "matrix":
+            return cls.from_csv(text)
+        raise ValueError("Unrecognized polar format (expected matrix CSV or Expedition pairwise .pol)")
+
+    @classmethod
+    def from_pol(cls, text: str) -> PolarTable:
+        tws_list: list[float] = []
+        speed_rows: list[tuple[list[float], list[float]]] = []
+        twa_set: set[float] = set()
+
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not s or s.startswith("!") or s.lower().startswith("pol"):
+                continue
+            cells = _split(ln)
+            if len(cells) < 7 or not _is_numeric(cells[0]):
+                continue
+            tws = float(cells[0])
+            pairs = cells[1:]
+            if len(pairs) % 2 != 0:
+                pairs = pairs[:-1]
+            twas: list[float] = []
+            speeds: list[float] = []
+            for k in range(0, len(pairs), 2):
+                twas.append(float(pairs[k]))
+                speeds.append(float(pairs[k + 1]))
+            tws_list.append(tws)
+            for a in twas:
+                twa_set.add(a)
+            speed_rows.append((twas, speeds))
+
+        if not tws_list:
+            raise ValueError("No TWS curves found in pairwise .pol file")
+
+        twa = np.array(sorted(twa_set), dtype=float)
+        tws = np.array(tws_list, dtype=float)
+        speed = np.zeros((tws.size, twa.size), dtype=float)
+        for i, (twas, speeds) in enumerate(speed_rows):
+            lut = dict(zip(twas, speeds, strict=False))
+            for j, a in enumerate(twa):
+                speed[i, j] = lut.get(float(a), 0.0)
+
+        ti = np.argsort(tws)
+        ai = np.argsort(twa)
+        return cls(tws=tws[ti], twa=twa[ai], speed=speed[np.ix_(ti, ai)])
 
     def speed_for(self, tws: float, twa: float) -> float:
-        """Bilinear boat speed (knots) at (tws, twa). No-go -> 0."""
         twa = abs(twa)
         if twa > 180.0:
-            twa = 360.0 - twa  # fold onto 0..180
-
-        # Below the smallest tabulated TWA (upwind no-go) => 0.
+            twa = 360.0 - twa
         if twa < self.twa[0]:
             return 0.0
+
+        # Below the lowest tabulated TWS, scale linearly toward zero (no phantom speed).
+        low_air_factor = 1.0
+        if tws < self.tws[0]:
+            if self.tws[0] <= 0:
+                return 0.0
+            low_air_factor = max(0.0, min(1.0, tws / self.tws[0]))
 
         t = float(np.clip(tws, self.tws[0], self.tws[-1]))
         a = float(np.clip(twa, self.twa[0], self.twa[-1]))
@@ -116,15 +191,9 @@ class PolarTable:
         s0 = s00 * (1 - fa) + s01 * fa
         s1 = s10 * (1 - fa) + s11 * fa
         val = s0 * (1 - ft) + s1 * ft
-        return float(max(0.0, val))
+        return float(max(0.0, val * low_air_factor))
 
     def best_vmg_angle(self, tws: float, upwind: bool) -> tuple[float, float]:
-        """Return (twa, vmg_knots) that maximizes velocity-made-good at this TWS.
-
-        Upwind maximizes bsp*cos(twa) over TWA in [twa_min, 90); downwind
-        maximizes bsp*|cos(twa)| over (90, twa_max].
-        """
-        # Fine sweep over the TWA range for a smooth optimum.
         if upwind:
             lo, hi = float(self.twa[0]), 90.0
         else:

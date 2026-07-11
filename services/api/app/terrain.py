@@ -46,9 +46,9 @@ class TerrainProvider:
         return self._ds is not None
 
     def elevation(self, lat: float, lon: float) -> float | None:
-        """Elevation in metres. Returns 0.0 (sea level) when no DEM is loaded."""
+        """Elevation in metres from the DEM, or None when no raster is loaded."""
         if self._ds is None:
-            return 0.0
+            return None
         try:
             row, col = self._ds.index(lon, lat)
             val = self._ds.read(1)[row, col]

@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { api, type CourseSummary } from "@/lib/api";
-import { courseFromGeoJson, courseToGeoJson } from "@/lib/courseGeoJson";
 import type { Course } from "@/lib/types";
+import { courseIsReady } from "@/lib/mapOverlays";
 
 export type EditMode = "none" | "start" | "finish" | "mark";
 
@@ -22,36 +20,36 @@ export default function CourseEditor({
   onCourseChange,
   editMode,
   onEditMode,
+  courseReady,
 }: {
   course: Course;
   onCourseChange: (c: Course) => void;
   editMode: EditMode;
   onEditMode: (m: EditMode) => void;
+  courseReady?: boolean;
 }) {
-  const [samples, setSamples] = useState<CourseSummary[]>([]);
-  const fileRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    api.courses().then(setSamples).catch(() => setSamples([]));
-  }, []);
-
-  const loadSample = async (id: string) => {
-    if (!id) return;
-    const c = await api.course(id);
-    onCourseChange({
-      start: c.start,
-      finish: c.finish,
-      marks: c.marks ?? [],
-      exclusions: c.exclusions ?? [],
-      depart_utc: c.depart_utc,
-      min_depth_m: c.min_depth_m,
-    });
-  };
-
   const exportGeoJson = () => {
-    const blob = new Blob([JSON.stringify(courseToGeoJson(course), null, 2)], {
-      type: "application/geo+json",
-    });
+    const gj = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: { kind: "start" },
+          geometry: { type: "Point", coordinates: [course.start[1], course.start[0]] },
+        },
+        ...course.marks.map((m, i) => ({
+          type: "Feature",
+          properties: { kind: "mark", name: m.name ?? `M${i + 1}` },
+          geometry: { type: "Point", coordinates: [m.position[1], m.position[0]] },
+        })),
+        {
+          type: "Feature",
+          properties: { kind: "finish" },
+          geometry: { type: "Point", coordinates: [course.finish[1], course.finish[0]] },
+        },
+      ],
+    };
+    const blob = new Blob([JSON.stringify(gj, null, 2)], { type: "application/geo+json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -60,33 +58,13 @@ export default function CourseEditor({
     URL.revokeObjectURL(url);
   };
 
-  const importGeoJson = async (file: File) => {
-    const gj = JSON.parse(await file.text());
-    onCourseChange(courseFromGeoJson(gj, course));
-  };
-
   return (
     <div style={{ fontSize: 12 }}>
-      <select
-        onChange={(e) => loadSample(e.target.value)}
-        defaultValue=""
-        style={{
-          width: "100%",
-          background: "#0b1220",
-          color: "var(--text)",
-          border: "1px solid var(--border)",
-          borderRadius: 6,
-          padding: "5px 6px",
-          marginBottom: 8,
-        }}
-      >
-        <option value="">Load sample course…</option>
-        {samples.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
+      {!courseReady && (
+        <div style={{ color: "var(--accent)", marginBottom: 8, fontSize: 11 }}>
+          Click <strong>Set start</strong> then <strong>Set finish</strong> on the map to define your course.
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
         <button style={btn(editMode === "start")} onClick={() => onEditMode(editMode === "start" ? "none" : "start")}>
@@ -109,9 +87,16 @@ export default function CourseEditor({
       )}
 
       <div style={{ color: "var(--muted)", marginBottom: 8 }}>
-        {course.marks.length} mark{course.marks.length === 1 ? "" : "s"} · start{" "}
-        {course.start.map((n) => n.toFixed(2)).join(", ")} · finish{" "}
-        {course.finish.map((n) => n.toFixed(2)).join(", ")}
+        {course.marks.length} mark{course.marks.length === 1 ? "" : "s"}
+        {courseIsReady(course) ? (
+          <>
+            {" "}
+            · start {course.start.map((n) => n.toFixed(2)).join(", ")} · finish{" "}
+            {course.finish.map((n) => n.toFixed(2)).join(", ")}
+          </>
+        ) : (
+          " · course not set"
+        )}
       </div>
 
       <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", color: "var(--muted)" }}>
@@ -134,21 +119,12 @@ export default function CourseEditor({
         />
       </label>
 
-      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-        <button style={{ ...btn(false), flex: 1 }} onClick={() => fileRef.current?.click()}>
-          Import GeoJSON
-        </button>
-        <button style={{ ...btn(false), flex: 1 }} onClick={exportGeoJson}>
+      <div style={{ marginTop: 8 }}>
+        <button style={{ ...btn(false), width: "100%" }} onClick={exportGeoJson} disabled={!courseReady}>
           Export GeoJSON
         </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".json,.geojson"
-          style={{ display: "none" }}
-          onChange={(e) => e.target.files?.[0] && importGeoJson(e.target.files[0])}
-        />
       </div>
+      <div style={{ color: "var(--muted)", fontSize: 10, marginTop: 6 }}>Course auto-saves in this browser.</div>
     </div>
   );
 }

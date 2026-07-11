@@ -66,7 +66,7 @@ todos:
     content: "M5b copernicus.py: copernicusmarine client (free token, optional), MED product MEDSEA_ANALYSISFORECAST_PHY_006_013 (incl tides), UK/N-Atlantic global SMOC GLOBAL_ANALYSISFORECAST_PHY_001_024; cache to NetCDF; /currents/fetch endpoint"
     status: pending
   - id: m5-router-currents
-    content: "M5c Router set-and-drift + leeway: apply leeway offset to heading (water-track), add current*current_drift_factor to get ground velocity, integrate SOG/COG; CurrentLayer arrows on map. AC per 7.4 + currents change ETA"
+    content: "M5c Router set-and-drift + leeway: apply leeway offset to heading (water-track), add current*current_drift_factor to get ground velocity, integrate SOG/COG; current particle flow on map. AC per 7.4 + currents change ETA"
     status: pending
   - id: m6-terrain-wind-base
     content: "M6a Terrain-wind base + heuristic: TerrainWindModel.apply(wind_field,dem,options)->WindField; heuristic.py fallback (per-island leeward shadow polygon L~k*h oriented downwind + corner-accel bump). Selection config windninja|heuristic|none"
@@ -131,7 +131,7 @@ Local-first static route planner for **UK + Mediterranean** offshore racing. Giv
 Clean, modern marine routing UI:
 - Dark chart canvas as the hero. Slim left control rail with collapsible sections: **Course editor**, **BoatConfig panel**, **Model picker**. Floating bottom **CompareBar** with color-swatched per-model rows.
 - **Distinct color per model**, overlaid (never aggregated); consistent palette in `apps/web/src/lib/colors.ts` matching `ModelPreset.color`.
-- Layer stack (bottom->top): OSM base -> Copernicus DEM terrain-RGB + hillshade (island/mountain relief, wind shadows) -> EMODnet depth contours (0/3/5/10 m) with >=`min_depth_m` safe-water shading -> current arrows -> per-model route GeoJSON lines with tack/gybe/mark markers -> optional wind-shadow polygons. Click -> elevation readout.
+- Layer stack (bottom->top): OSM base -> Copernicus DEM terrain-RGB + hillshade (island/mountain relief, wind shadows) -> EMODnet depth contours (0/3/5/10 m) with >=`min_depth_m` safe-water shading -> current particle flow -> per-model route GeoJSON lines with tack/gybe/mark markers -> optional wind-shadow polygons. Click -> elevation readout.
 - Crisp typography, subtle panels, tabular numerics in RouteTable/CompareBar, hover tooltips, smooth layer toggles, model color swatches everywhere.
 
 ## Step 0 — Git repo (runs first, in background)
@@ -332,12 +332,12 @@ BACKTRACK parents from best finish node → list[RouteLeg]
 - **AC:** constant wind/no current/no terrain -> expected VMG-tacking route + plausible ETA; currents on changes ETA/track (strong tidal gate shifts timing); terrain wind on/off changes route near islands; island between endpoints -> route goes around; two models -> two different routes; ~600 nm course at defaults completes < ~15 s incl. cached terrain wind.
 
 ### 7.7 Frontend
-- **MapView:** OSM base; DEM terrain-RGB + hillshade; EMODnet depth contours (0/3/5/10 m) with >=`min_depth_m` safe shading; **current arrows** layer; one colored GeoJSON line per model with tack/gybe/mark markers; optional wind-shadow polygons; click -> elevation.
+- **MapView:** OSM base; DEM terrain-RGB + hillshade; EMODnet depth contours (0/3/5/10 m) with >=`min_depth_m` safe shading; **current particle** layer; one colored GeoJSON line per model with tack/gybe/mark markers; optional wind-shadow polygons; click -> elevation.
 - **BoatConfigPanel:** edit tack/gybe penalties, tack-angle overrides, leeway coeff, current-drift factor, polar-efficiency; upload polar.
 - **ModelPicker:** checkbox list of 5-6 European presets with color swatches; toggles `use_terrain_wind`/`use_currents`; "Run".
 - **CompareBar:** row per model — color, label, ETA (UTC + elapsed), distance, tacks/gybes, forecast-exhausted flag.
 - **RouteTable:** per-model waypoint table incl. current set/rate and SOG/COG.
-- **AC:** select 3 models -> 3 colored routes + 3 comparison rows; toggling terrain-wind/currents visibly changes routes; terrain relief, safe-water shading, current arrows render.
+- **AC:** select 3 models -> 3 colored routes + 3 comparison rows; toggling terrain-wind/currents visibly changes routes; terrain relief, safe-water shading, current particles render.
 
 ## API contract (FastAPI, spec §8)
 ```
@@ -357,7 +357,7 @@ All UTC ISO-8601; positions `(lat,lon)`. `/route` fails fast with `warnings[]` i
 - **M2 Forecast (Open-Meteo):** ECMWF + ICON via Open-Meteo -> canonical `WindField`; `windAt`. *AC:* §7.2 vs EU fixture. **[GATE 1]**
 - **M3 Geo + depth:** land + EMODnet depth + exclusions + geodesy; masks prebuilt for one race bbox. *AC:* §7.5.
 - **M4 Router (single model, no terrain/current):** isochrone + pruning + penalties; `/route`; waypoint table. *AC:* §7.6 baseline. **[GATE 2]**
-- **M5 Currents:** Copernicus SMOC + FES offline; set-and-drift + leeway; current arrows. *AC:* §7.4 + currents change ETA.
+- **M5 Currents:** Copernicus SMOC + FES offline; set-and-drift + leeway; current particle flow. *AC:* §7.4 + currents change ETA.
 - **M6 Orographic wind:** WindNinja (mass-conserving + diurnal) + heuristic fallback; wire into router + optional shadow render. *AC:* §7.3 + terrain changes route near islands. **[GATE 3]**
 - **M7 Multi-model:** add ICON-EU/ARPEGE/AROME/UKMO; `/route` loops model_ids; ModelPicker + colored overlays + CompareBar. *AC:* 3 models -> 3 colored routes + table; toggles work.
 - **M8 Polish + fixtures + docs:** sample courses (Aegean 600, Rolex Middle Sea, UK/RORC leg) + GeoJSON import/export; README "fetch ashore, race offline" + WindNinja/Copernicus setup. *AC:* cold checkout reproduces a multi-model, terrain+current route. **[GATE 4]**

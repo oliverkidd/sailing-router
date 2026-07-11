@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Nisyros island (approx)" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [26.55, 36.55],
+            [27.25, 36.55],
+            [27.25, 36.75],
+            [26.55, 36.75],
+            [26.55, 36.55]
+          ]
+        ]
+      }
+    }
+  ]
+}

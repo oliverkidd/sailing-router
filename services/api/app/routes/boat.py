@@ -33,10 +33,20 @@ async def upload_boat(
     config: str = Form("{}"),
 ) -> BoatResponse:
     raw = await file.read()
-    try:
-        polar = PolarTable.from_bytes(raw)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=422, detail=f"Invalid polar CSV: {exc}") from exc
+    text = raw.decode("utf-8-sig")
+    polar = None
+    errors: list[str] = []
+    for parser, label in ((PolarTable.from_csv, "matrix/CSV"), (PolarTable.from_pol, "pairwise .pol")):
+        try:
+            polar = parser(text)
+            break
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{label}: {exc}")
+    if polar is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid polar file ({'; '.join(errors)})",
+        ) from None
 
     polar_id = store.save_polar(file.filename or "polar", raw.decode("utf-8-sig"))
     cfg_dict = json.loads(config or "{}")
