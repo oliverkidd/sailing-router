@@ -7,7 +7,6 @@ import CompareBar from "@/components/CompareBar";
 import CourseEditor, { type EditMode } from "@/components/CourseEditor";
 import ForecastDropdown from "@/components/ForecastDropdown";
 import ForecastPicker from "@/components/ForecastPicker";
-import InstrumentCluster from "@/components/InstrumentCluster";
 import MapControls from "@/components/MapControls";
 import MapLoadOverlay, { type MapLoadKind } from "@/components/MapLoadOverlay";
 import RouteBuildProgress, { type ModelStatus } from "@/components/RouteBuildProgress";
@@ -747,7 +746,7 @@ export default function Home() {
           routes={routes}
           course={course}
           showWind={showWind}
-          windTimeUtc={overlayTimeUtc}
+          windTimeUtc={routes.length > 0 ? scrubHourUtc : overlayTimeUtc}
           windSeries={windSeries}
           playbackPosition={playbackPosition}
           playbackHeading={playbackHeading}
@@ -763,8 +762,10 @@ export default function Home() {
           horizonStartUtc={horizonStartUtc}
           horizonEndUtc={horizonEndUtc}
           loading={windLoading && routes.length === 0}
+          routeActive={routes.length > 0}
+          leg={playbackLeg}
+          playUntilUtc={activeRoute?.eta_utc ?? null}
         />
-        {playbackLeg && <InstrumentCluster leg={playbackLeg} />}
         <MapLoadOverlay kind={mapLoadKind} label={mapLoadLabel} />
         {activeError && <div className="map-error-banner">{activeError}</div>}
         <MapControls

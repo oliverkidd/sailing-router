@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ import numpy as np
 from . import catalog, store_wind
 from .config import MODEL_PRESETS_BY_ID, WIND_TTL_S, model_is_configured
 from .forecast import get_source
+from .forecast.grib_source import ForecastRateLimitError
 from .metocean import WindField
 from .overlays.grid import display_series_payload
 from .schemas import BBox
@@ -89,7 +91,9 @@ def get_area_field(
 
     Returns None on failure (caller reports 'unavailable'). No Open-Meteo fallback.
     Delta-extends the cached field when only some hours are missing.
+    Raises ForecastRateLimitError when the upstream CDN rate-limits.
     """
+    t_all = time.perf_counter()
     if MODEL_PRESETS_BY_ID.get(model_id) is None:
         logger.warning("unknown model_id %s", model_id)
         return None
@@ -148,7 +152,15 @@ def get_area_field(
             or not np.allclose(cached.lons, lons_t)
         ):
             try:
+                t_rg = time.perf_counter()
                 cached = cached.regrid(lats_t, lons_t)
+                logger.info(
+                    "wind %s cache-regrid %dx%d %.0fms",
+                    model_id,
+                    lats_t.size,
+                    lons_t.size,
+                    (time.perf_counter() - t_rg) * 1000,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "cache regrid failed for %s (discarding covering cache): %s",
@@ -163,19 +175,44 @@ def get_area_field(
             have = {float(round(t)) for t in cached.times.tolist()}
         missing = [h for h in needed if float(round(h)) not in have]
         if not missing and cached is not None:
+            logger.info(
+                "wind %s cache-hit region=%s hours=%d grid=%dx%d total=%.0fms",
+                model_id,
+                region.key(),
+                len(needed),
+                lats_t.size,
+                lons_t.size,
+                (time.perf_counter() - t_all) * 1000,
+            )
             return cached
 
         # Fetch only the native steps bracketing the missing hours.
         m_start = datetime.fromtimestamp(min(missing), UTC)
         m_end = datetime.fromtimestamp(max(missing), UTC)
         steps = src.steps_for_window(cyc, m_start, m_end)
+        logger.info(
+            "wind %s cache-miss region=%s missing=%d/%d steps=%d grid=%dx%d",
+            model_id,
+            region.key(),
+            len(missing),
+            len(needed),
+            len(steps),
+            lats_t.size,
+            lons_t.size,
+        )
         try:
+            t_fetch = time.perf_counter()
             native = src.fetch(region, cyc, steps)
+            fetch_ms = (time.perf_counter() - t_fetch) * 1000
+
+            t_norm = time.perf_counter()
             canon = native.regrid(lats_t, lons_t).resample_hourly(
                 min(missing), max(missing)
             )
             merged = WindField.concat_time([cached, canon]) if cached is not None else canon
-            # Rewrite whole Zarr (simplest correct option; append is a later opt).
+            norm_ms = (time.perf_counter() - t_norm) * 1000
+
+            t_write = time.perf_counter()
             path = store_wind.write_field(merged, cyc, region)
             catalog.upsert(
                 model_id,
@@ -187,11 +224,39 @@ def get_area_field(
                 res_deg=CANON_RES_DEG,
             )
             _lru_put(str(path), merged)
+            write_ms = (time.perf_counter() - t_write) * 1000
+            logger.info(
+                "wind %s fetched fetch=%.0fms regrid+resample=%.0fms zarr=%.0fms "
+                "total=%.0fms n_times=%d",
+                model_id,
+                fetch_ms,
+                norm_ms,
+                write_ms,
+                (time.perf_counter() - t_all) * 1000,
+                merged.n_times,
+            )
             return merged
+        except ForecastRateLimitError:
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("GRIB fetch %s failed: %s", model_id, exc)
             # If we had a partial cache that covers something, return it.
             return cached
+
+
+def ensure_wind_window(
+    model_id: str,
+    bbox: BBox,
+    *,
+    start: datetime,
+    end: datetime,
+) -> WindField | None:
+    """Ensure hourly canonical wind for [start,end] on region_bbox(bbox).
+
+    Same path as map /wind/area (minus display downsample). Used by prepare + /route.
+    Raises ForecastRateLimitError; returns None if unavailable.
+    """
+    return get_area_field(model_id, bbox, start=start, end=end)
 
 
 def get_display_series(

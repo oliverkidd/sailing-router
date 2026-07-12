@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter
 
 from ..field_service import get_display_series
+from ..forecast.grib_source import ForecastRateLimitError
 from ..schemas import BBox
 from ..util.timeparse import parse_utc_iso
 
@@ -29,7 +30,14 @@ def wind_area(
     start = parse_utc_iso(start_utc) if start_utc else now
     end = parse_utc_iso(end_utc) if end_utc else start + timedelta(hours=24)
 
-    payload = get_display_series(model_id, bbox, start=start, end=end)
+    try:
+        payload = get_display_series(model_id, bbox, start=start, end=end)
+    except ForecastRateLimitError as exc:
+        return {
+            "error": "rate_limited",
+            "message": str(exc),
+            "bbox": bbox.model_dump(),
+        }
     if payload is None:
         return {
             "error": "unavailable",

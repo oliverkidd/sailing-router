@@ -142,22 +142,27 @@ export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
     a.position[1] + (b.position[1] - a.position[1]) * ft,
   ];
   const lerp = (x: number, y: number) => x + (y - x) * ft;
+  const lerpAngle = (x: number, y: number) => {
+    const d = ((y - x + 540) % 360) - 180;
+    return (x + d * ft + 360) % 360;
+  };
+  const heading = lerpAngle(a.cog ?? a.heading ?? 0, b.cog ?? b.heading ?? 0);
   const leg: RouteLeg = {
     ...a,
     t_utc: tUtc,
     position,
     tws: lerp(a.tws, b.tws),
-    twd: a.twd,
+    twd: lerpAngle(a.twd, b.twd),
     twa: lerp(a.twa, b.twa),
-    heading: a.heading,
+    heading,
     bsp: lerp(a.bsp, b.bsp),
     sog: lerp(a.sog, b.sog),
-    cog: a.cog,
+    cog: heading,
     maneuver: "none",
   };
   return {
     position,
-    heading: a.cog ?? a.heading ?? null,
+    heading,
     leg,
     index: i0,
   };

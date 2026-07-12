@@ -1,9 +1,13 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import InstrumentCluster from "@/components/InstrumentCluster";
+import type { RouteLeg } from "@/lib/types";
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+/** Forecast time advanced per 1s of wall clock while playing (~20 min/s). */
+const PLAY_RATE_MS_PER_SEC = 20 * 60 * 1000;
 
 function floorHourMs(iso: string): number {
   const d = new Date(iso);
@@ -18,11 +22,20 @@ function toIso(ms: number): string {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function formatDayHour(ms: number): { day: string; hour: string } {
+function formatDayHour(
+  ms: number,
+  withMinutes: boolean,
+  withSeconds = false,
+): { day: string; hour: string } {
   const d = new Date(ms);
   const day = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
-  const hour = `${String(d.getUTCHours()).padStart(2, "0")}:00 UTC`;
-  return { day, hour };
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = withMinutes || withSeconds ? String(d.getUTCMinutes()).padStart(2, "0") : "00";
+  if (withSeconds) {
+    const ss = String(d.getUTCSeconds()).padStart(2, "0");
+    return { day, hour: `${hh}:${mm}:${ss} UTC` };
+  }
+  return { day, hour: `${hh}:${mm} UTC` };
 }
 
 const btnStyle: CSSProperties = {
@@ -46,81 +59,165 @@ export default function TimeScrubber({
   horizonStartUtc,
   horizonEndUtc,
   loading = false,
+  routeActive = false,
+  leg = null,
+  playUntilUtc = null,
 }: {
   overlayTimeUtc: string;
   onTime: (iso: string) => void;
   horizonStartUtc: string;
   horizonEndUtc: string;
   loading?: boolean;
+  routeActive?: boolean;
+  leg?: RouteLeg | null;
+  /** When set, autoplay stops at this time (e.g. route ETA). */
+  playUntilUtc?: string | null;
 }) {
-  const startMs = floorHourMs(horizonStartUtc);
-  const endMs = floorHourMs(horizonEndUtc);
-  const curMs = Math.min(endMs, Math.max(startMs, floorHourMs(overlayTimeUtc)));
-  const { day, hour } = formatDayHour(curMs);
+  const [playing, setPlaying] = useState(false);
+  const onTimeRef = useRef(onTime);
+  onTimeRef.current = onTime;
+  const curMsRef = useRef(0);
+  const playEndRef = useRef(0);
+
+  const startMs = routeActive
+    ? new Date(horizonStartUtc).getTime()
+    : floorHourMs(horizonStartUtc);
+  const endMs = routeActive
+    ? new Date(horizonEndUtc).getTime()
+    : floorHourMs(horizonEndUtc);
+  const rawMs = new Date(overlayTimeUtc).getTime();
+  const curMs = Math.min(
+    endMs,
+    Math.max(startMs, routeActive ? rawMs : floorHourMs(overlayTimeUtc)),
+  );
+  curMsRef.current = curMs;
+  const { day, hour } = formatDayHour(curMs, routeActive, playing);
   const atStart = curMs <= startMs;
   const atEnd = curMs >= endMs;
+  const playEndMs =
+    playUntilUtc != null ? Math.min(endMs, new Date(playUntilUtc).getTime()) : endMs;
+  playEndRef.current = playEndMs;
+  const atPlayEnd = curMs >= playEndMs;
+
+  useEffect(() => {
+    if (!routeActive) setPlaying(false);
+  }, [routeActive]);
+
+  useEffect(() => {
+    if (atPlayEnd) setPlaying(false);
+  }, [atPlayEnd]);
+
+  useEffect(() => {
+    if (!playing || !routeActive) return;
+
+    let raf = 0;
+    let last = performance.now();
+    let playhead = curMsRef.current;
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.064, (now - last) / 1000);
+      last = now;
+      playhead = Math.min(playEndRef.current, playhead + PLAY_RATE_MS_PER_SEC * dt);
+      onTimeRef.current(toIso(playhead));
+      if (playhead >= playEndRef.current) {
+        setPlaying(false);
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, routeActive]);
 
   const step = (deltaMs: number) => {
+    if (playing) setPlaying(false);
     const next = Math.min(endMs, Math.max(startMs, curMs + deltaMs));
     onTime(toIso(next));
   };
 
   return (
     <div
-      className={`time-nav${loading ? " time-nav--loading" : ""}`}
+      className={[
+        "time-nav",
+        loading ? "time-nav--loading" : "",
+        routeActive ? "time-nav--route" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       role="group"
       aria-label="Forecast time"
       aria-busy={loading || undefined}
     >
-      <button
-        type="button"
-        style={{ ...btnStyle, opacity: atStart ? 0.35 : 1 }}
-        onClick={() => step(-DAY_MS)}
-        disabled={atStart}
-        aria-label="Previous day"
-        title="−1 day"
-      >
-        «
-      </button>
-      <button
-        type="button"
-        style={{ ...btnStyle, opacity: atStart ? 0.35 : 1 }}
-        onClick={() => step(-HOUR_MS)}
-        disabled={atStart}
-        aria-label="Previous hour"
-        title="−1 hour"
-      >
-        ‹
-      </button>
+      <div className="time-nav-row">
+        <button
+          type="button"
+          style={{ ...btnStyle, opacity: atStart ? 0.35 : 1 }}
+          onClick={() => step(-DAY_MS)}
+          disabled={atStart}
+          aria-label="Previous day"
+          title="−1 day"
+        >
+          «
+        </button>
+        <button
+          type="button"
+          style={{ ...btnStyle, opacity: atStart ? 0.35 : 1 }}
+          onClick={() => step(-HOUR_MS)}
+          disabled={atStart}
+          aria-label="Previous hour"
+          title="−1 hour"
+        >
+          ‹
+        </button>
 
-      <div className="time-nav-label">
-        <div className="time-nav-hour">
-          {loading && <span className="time-nav-spin" aria-hidden />}
-          {hour}
+        <div className="time-nav-label">
+          <div className="time-nav-hour">
+            {loading && <span className="time-nav-spin" aria-hidden />}
+            {hour}
+          </div>
+          <div className="time-nav-day">{loading ? "Loading forecast…" : day}</div>
+          {routeActive && (
+            <button
+              type="button"
+              className="time-nav-play"
+              onClick={() => setPlaying((p) => !p)}
+              disabled={atPlayEnd && !playing}
+              aria-label={playing ? "Pause route playback" : "Play route playback"}
+              title={playing ? "Pause" : "Play"}
+            >
+              {playing ? (
+                <span className="time-nav-pause-icon" aria-hidden />
+              ) : (
+                <span className="time-nav-play-icon" aria-hidden />
+              )}
+            </button>
+          )}
         </div>
-        <div className="time-nav-day">{loading ? "Loading forecast…" : day}</div>
+
+        <button
+          type="button"
+          style={{ ...btnStyle, opacity: atEnd ? 0.35 : 1 }}
+          onClick={() => step(HOUR_MS)}
+          disabled={atEnd}
+          aria-label="Next hour"
+          title="+1 hour"
+        >
+          ›
+        </button>
+        <button
+          type="button"
+          style={{ ...btnStyle, opacity: atEnd ? 0.35 : 1 }}
+          onClick={() => step(DAY_MS)}
+          disabled={atEnd}
+          aria-label="Next day"
+          title="+1 day"
+        >
+          »
+        </button>
       </div>
 
-      <button
-        type="button"
-        style={{ ...btnStyle, opacity: atEnd ? 0.35 : 1 }}
-        onClick={() => step(HOUR_MS)}
-        disabled={atEnd}
-        aria-label="Next hour"
-        title="+1 hour"
-      >
-        ›
-      </button>
-      <button
-        type="button"
-        style={{ ...btnStyle, opacity: atEnd ? 0.35 : 1 }}
-        onClick={() => step(DAY_MS)}
-        disabled={atEnd}
-        aria-label="Next day"
-        title="+1 day"
-      >
-        »
-      </button>
+      {leg && <InstrumentCluster leg={leg} embedded />}
     </div>
   );
 }

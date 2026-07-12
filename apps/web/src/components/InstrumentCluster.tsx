@@ -2,15 +2,30 @@
 
 import type { RouteLeg } from "@/lib/types";
 
-export default function InstrumentCluster({ leg }: { leg: RouteLeg }) {
-  const twd = leg.twd ?? 0;
-  const twa = leg.twa ?? 0;
+export default function InstrumentCluster({
+  leg,
+  embedded = false,
+}: {
+  leg: RouteLeg;
+  embedded?: boolean;
+}) {
+  const twd = Math.round(leg.twd ?? 0);
+  const twa = Math.round(leg.twa ?? 0);
+  const tws = Number((leg.tws ?? 0).toFixed(1));
+  const bsp = Number((leg.bsp ?? 0).toFixed(1));
+  const sog = Number((leg.sog ?? 0).toFixed(1));
 
   return (
-    <div className="instrument-cluster map-instrument-cluster">
+    <div
+      className={
+        embedded
+          ? "instrument-cluster time-nav-instruments"
+          : "instrument-cluster map-instrument-cluster"
+      }
+    >
       <div className="gauge">
         <span className="gauge-label">TWS</span>
-        <span className="gauge-value">{leg.tws}</span>
+        <span className="gauge-value">{tws}</span>
         <span className="gauge-unit">kn</span>
       </div>
       <div className="gauge gauge-dial">
@@ -23,7 +38,7 @@ export default function InstrumentCluster({ leg }: { leg: RouteLeg }) {
       </div>
       <div className="gauge">
         <span className="gauge-label">BSP</span>
-        <span className="gauge-value">{leg.bsp}</span>
+        <span className="gauge-value">{bsp}</span>
         <span className="gauge-unit">kn</span>
       </div>
       <div className="gauge">
@@ -33,7 +48,7 @@ export default function InstrumentCluster({ leg }: { leg: RouteLeg }) {
       </div>
       <div className="gauge">
         <span className="gauge-label">SOG</span>
-        <span className="gauge-value">{leg.sog}</span>
+        <span className="gauge-value">{sog}</span>
         <span className="gauge-unit">kn</span>
       </div>
     </div>

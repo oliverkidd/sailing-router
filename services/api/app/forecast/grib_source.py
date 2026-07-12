@@ -24,6 +24,20 @@ _MAX_RETRIES = 4
 _RETRY_STATUSES = {429, 502, 503, 504}
 
 
+class ForecastRateLimitError(RuntimeError):
+    """Upstream forecast CDN rejected the request (HTTP 429)."""
+
+    def __init__(self, model_id: str, detail: str = ""):
+        self.model_id = model_id
+        msg = (
+            f"rate limited by {model_id} open data"
+            " — try again shortly or use GFS/ICON"
+        )
+        if detail:
+            msg = f"{msg} ({detail})"
+        super().__init__(msg)
+
+
 @dataclass(frozen=True)
 class SourceSpec:
     model_id: str

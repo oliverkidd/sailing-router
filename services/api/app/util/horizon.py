@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from datetime import datetime, timedelta
 
 from ..geo import distance_nm
 from ..schemas import Course
 
-_ASSUMED_SLOW_SPEED_KN = 6.0
-_SAFETY_MARGIN = 1.5
-_MIN_HORIZON_H = 24
-_MAX_HORIZON_H = 168  # 7 days hard cap (was 16 — too heavy for global GRIB)
-# Floor for routing: enough margin for a short coastal race, not a forced week.
-_ROUTE_MIN_HORIZON_H = 36
+# Match map scrubber prefetch window (apps/web PREFETCH_WINDOW_H).
+CHUNK_H = 3
+_ASSUMED_SPEED_KN = 5.0
+_MIN_HORIZON_H = 3
+_MAX_HORIZON_H = 168  # 7 days hard cap
 
 
 def course_distance_nm(course: Course) -> float:
@@ -23,13 +24,30 @@ def course_distance_nm(course: Course) -> float:
     return total
 
 
-def estimate_horizon_h(course: Course) -> int:
-    """Conservative horizon: assume slow boat + safety margin."""
+def routing_horizon_h(course: Course) -> int:
+    """Hours of forecast to prefetch: ceil(course_nm / 5 kn), clamped 3..168."""
     dist = max(1.0, course_distance_nm(course))
-    hours = math.ceil((dist / _ASSUMED_SLOW_SPEED_KN) * _SAFETY_MARGIN)
+    hours = math.ceil(dist / _ASSUMED_SPEED_KN)
     return int(max(_MIN_HORIZON_H, min(_MAX_HORIZON_H, hours)))
 
 
-def routing_horizon_h(course: Course) -> int:
-    """Horizon used for routing and prefetch (course estimate, at least 36h)."""
-    return max(estimate_horizon_h(course), _ROUTE_MIN_HORIZON_H)
+def estimate_horizon_h(course: Course) -> int:
+    """Alias for routing_horizon_h (kept for older call sites)."""
+    return routing_horizon_h(course)
+
+
+def iter_hour_chunks(
+    start: datetime,
+    end: datetime,
+    chunk_h: int = CHUNK_H,
+) -> Iterator[tuple[datetime, datetime]]:
+    """Yield [chunk_start, chunk_end] covering [start, end] in chunk_h steps."""
+    if end < start:
+        start, end = end, start
+    if chunk_h < 1:
+        chunk_h = 1
+    cursor = start
+    while cursor < end:
+        chunk_end = min(end, cursor + timedelta(hours=chunk_h))
+        yield cursor, chunk_end
+        cursor = chunk_end

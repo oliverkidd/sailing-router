@@ -61,7 +61,7 @@ export class WindHeatmapLayer {
           id: this.id,
           type: "raster",
           source: this.id,
-          paint: { "raster-opacity": 0.65, "raster-fade-duration": 0 },
+          paint: { "raster-opacity": 0.5, "raster-fade-duration": 0 },
         },
         beforeId,
       );
