@@ -5,6 +5,7 @@ export interface PointInspect {
   lon: number;
   elevation_m?: number | null;
   depth_m?: number | null;
+  depth_lt_m?: number | null;
   on_land?: boolean | null;
   tws?: number | null;
   twd?: number | null;
@@ -29,6 +30,9 @@ function terrainGauge(data: PointInspect): { label: string; value: string; unit:
   }
   if (data.depth_m != null) {
     return { label: "Depth", value: fmtNum(data.depth_m, 1), unit: "m" };
+  }
+  if (data.depth_lt_m != null) {
+    return { label: "Depth", value: `<${data.depth_lt_m}`, unit: "m" };
   }
   if (data.elevation_m != null && data.elevation_m < 0) {
     return { label: "Depth", value: fmtNum(-data.elevation_m, 1), unit: "m" };

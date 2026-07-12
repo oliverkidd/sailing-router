@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Build coastline.pmtiles (OSM land + NE places) for the UK+Europe chart region.
+"""Build coastline.pmtiles for the UK+Europe chart region.
 
-Sole land source: OpenStreetMap land polygons (osmdata.openstreetmap.de).
-No GSHHS / Natural Earth land fallback — missing OSM input exits non-zero.
+Layers:
+  land   — OSM land polygons (split, tippecanoe-friendly)
+  water  — OSM coastal water polygons (estuaries / riverbanks / harbours)
+  places — OSM coastal places (city/town/island/harbour)
+  roads  — OSM major highways (subtle underlay)
+  rivers — OSM named rivers/canals (subtle underlay + line labels)
 
 Requires: tippecanoe, ogr2ogr on PATH.
+  python scripts/fetch_osm_land.py
+  python scripts/fetch_osm_chart_features.py
 """
 
 from __future__ import annotations
@@ -14,59 +20,51 @@ import subprocess
 import sys
 from pathlib import Path
 
-from shapely.geometry import Point, box
-
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from region import REGION_BBOX  # noqa: E402
+from region import chart_bbox, use_sample  # noqa: E402
 
 OSM_SHP_CANDIDATES = [
     ROOT / "data" / "geo" / "osm" / "land-polygons-split-4326" / "land_polygons.shp",
     ROOT / "data" / "geo" / "osm" / "land_polygons.shp",
 ]
-NE_PLACES = ROOT / "data" / "geo" / "ne_10m_populated_places.geojson"
-NE_GEOGRAPHY = ROOT / "data" / "geo" / "ne_10m_geography_regions_points.geojson"
 WORK = ROOT / "data" / "cache" / "tiles_build"
 OUT = ROOT / "apps" / "web" / "public" / "geo" / "coastline.pmtiles"
 
-_MAX_TOWN_SCALERANK = 8
-_MAX_ISLAND_SCALERANK = 8
-_ISLAND_FEATURECLAS = frozenset({"island", "island group", "archipelago"})
+OSM_PLACES = WORK / "osm_places.geojsonl"
+OSM_ROADS = WORK / "osm_roads.geojsonl"
+OSM_RIVERS = WORK / "osm_rivers.geojsonl"
+OSM_WATER = WORK / "osm_water.geojsonl"
 
 
 def _find_osm_shp() -> Path | None:
     for p in OSM_SHP_CANDIDATES:
         if p.exists():
             return p
-    matches = list((ROOT / "data" / "geo" / "osm").rglob("land_polygons.shp"))
+    matches = sorted(
+        (ROOT / "data" / "geo" / "osm").rglob("land_polygons.shp"),
+        key=lambda p: (0 if "split" in str(p) else 1, str(p)),
+    )
     return matches[0] if matches else None
 
 
-def _clean_island_name(name: str) -> str:
-    n = name.strip()
-    for suffix in (" Island", " Is.", " I.", " Islands"):
-        if n.endswith(suffix) and len(n) > len(suffix) + 2:
-            n = n[: -len(suffix)].strip()
-            break
-    return n
-
-
 def _write_land_geojsonl(shp: Path, path: Path) -> int:
-    """Clip OSM land to REGION_BBOX with ogr2ogr — no geometry simplify."""
+    """Clip OSM land to active chart bbox with ogr2ogr — no geometry simplify."""
     if path.exists():
         path.unlink()
 
-    bbox = (
-        f"{REGION_BBOX['lon_min']} {REGION_BBOX['lat_min']} "
-        f"{REGION_BBOX['lon_max']} {REGION_BBOX['lat_max']}"
+    bb = chart_bbox()
+    clip = (
+        f"{bb['lon_min']} {bb['lat_min']} "
+        f"{bb['lon_max']} {bb['lat_max']}"
     )
     cmd = [
         "ogr2ogr",
         "-f",
         "GeoJSONSeq",
         "-clipsrc",
-        *bbox.split(),
+        *clip.split(),
         "-nlt",
         "PROMOTE_TO_MULTI",
         str(path),
@@ -76,7 +74,6 @@ def _write_land_geojsonl(shp: Path, path: Path) -> int:
     subprocess.run(cmd, check=True)
 
     n = 0
-    # Strip bulky attributes; tippecanoe only needs geometry for land fill.
     tmp = path.with_suffix(".tmp.geojsonl")
     with path.open() as inp, tmp.open("w") as out:
         for line in inp:
@@ -91,129 +88,115 @@ def _write_land_geojsonl(shp: Path, path: Path) -> int:
     return n
 
 
-def _write_places_geojsonl(path: Path, clip) -> int:
-    features: list[dict] = []
+def _count_lines(path: Path) -> int:
+    if not path.exists():
+        return 0
+    n = 0
+    with path.open() as fh:
+        for _ in fh:
+            n += 1
+    return n
 
-    if NE_PLACES.exists():
-        places = json.loads(NE_PLACES.read_text())
-        for f in places.get("features", []):
-            props = f.get("properties") or {}
-            geom = f.get("geometry") or {}
-            if geom.get("type") != "Point":
+
+def _orient_water_geojsonl(path: Path) -> int:
+    """Force GeoJSON exterior rings CCW so fills survive tippecanoe.
+
+    OSM/shapely often emit clockwise outers. With wrong winding (or
+    --use-source-polygon-winding) tippecanoe treats them as holes and the
+    water layer vanishes from tiles.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return 0
+    from shapely.geometry import mapping, shape
+    from shapely.ops import orient
+
+    tmp = path.with_suffix(".orient.tmp.geojsonl")
+    n = 0
+    with path.open() as inp, tmp.open("w") as out:
+        for line in inp:
+            line = line.strip()
+            if not line:
                 continue
-            coords = geom.get("coordinates")
-            if not coords or len(coords) < 2:
-                continue
-            lon, lat = float(coords[0]), float(coords[1])
-            if not clip.contains(Point(lon, lat)):
-                continue
+            feat = json.loads(line)
             try:
-                rank = int(props.get("SCALERANK", 10))
-            except (TypeError, ValueError):
-                rank = 10
-            if rank > _MAX_TOWN_SCALERANK:
-                continue
-            name = (
-                props.get("NAME")
-                or props.get("NAMEASCII")
-                or props.get("name")
-                or ""
-            ).strip()
-            if not name:
-                continue
-            features.append(
-                {
-                    "type": "Feature",
-                    "properties": {"name": name, "kind": "town", "rank": rank},
-                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                }
-            )
-
-    if NE_GEOGRAPHY.exists():
-        geo = json.loads(NE_GEOGRAPHY.read_text())
-        for f in geo.get("features", []):
-            props = f.get("properties") or {}
-            geom = f.get("geometry") or {}
-            if geom.get("type") != "Point":
-                continue
-            fclass = str(props.get("featurecla") or props.get("FEATURECLA") or "").lower()
-            if fclass not in _ISLAND_FEATURECLAS:
-                continue
-            coords = geom.get("coordinates")
-            if not coords or len(coords) < 2:
-                continue
-            lon, lat = float(coords[0]), float(coords[1])
-            if not clip.contains(Point(lon, lat)):
-                continue
-            try:
-                rank = int(props.get("scalerank", props.get("SCALERANK", 10)))
-            except (TypeError, ValueError):
-                rank = 10
-            if rank > _MAX_ISLAND_SCALERANK:
-                continue
-            name = _clean_island_name(
-                str(props.get("name") or props.get("NAME") or "").strip()
-            )
-            if not name:
-                continue
-            features.append(
-                {
-                    "type": "Feature",
-                    "properties": {"name": name, "kind": "island", "rank": rank},
-                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                }
-            )
-
-    with path.open("w") as fh:
-        for feat in features:
-            fh.write(json.dumps(feat, separators=(",", ":")) + "\n")
-    return len(features)
+                geom = orient(shape(feat["geometry"]), sign=1.0)
+                feat["geometry"] = mapping(geom)
+            except Exception:  # noqa: BLE001
+                pass
+            out.write(json.dumps(feat, separators=(",", ":")) + "\n")
+            n += 1
+    tmp.replace(path)
+    return n
 
 
 def main() -> int:
     WORK.mkdir(parents=True, exist_ok=True)
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
+    if use_sample():
+        print("[coast] SAMPLE mode — Isle of Wight / Solent land + features")
+
     shp = _find_osm_shp()
     if shp is None:
         print(
             "[coast] OSM land polygons missing.\n"
-            "       Run: python services/api/scripts/fetch_osm_land.py\n"
-            "       No GSHHS / Natural Earth land fallback.",
+            "       Run: python services/api/scripts/fetch_osm_land.py",
             file=sys.stderr,
         )
         return 1
 
-    clip = box(
-        REGION_BBOX["lon_min"],
-        REGION_BBOX["lat_min"],
-        REGION_BBOX["lon_max"],
-        REGION_BBOX["lat_max"],
-    )
+    min_places_bytes = 200 if use_sample() else 1000
+    if not OSM_PLACES.exists() or OSM_PLACES.stat().st_size < min_places_bytes:
+        print(
+            "[coast] OSM chart features missing (places/roads/rivers/water).\n"
+            "       Run: python services/api/scripts/fetch_osm_chart_features.py [--sample]",
+            file=sys.stderr,
+        )
+        return 1
 
     land_path = WORK / "land.geojsonl"
-    places_path = WORK / "places.geojsonl"
 
-    print(f"[coast] clipping OSM land ({shp}) to REGION_BBOX …")
-    try:
-        n_land = _write_land_geojsonl(shp, land_path)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[coast] OSM clip failed: {exc}", file=sys.stderr)
-        return 1
-    print(f"[coast] wrote {n_land} land polygons → {land_path}")
+    # Sample always reclips; full region reuses a large land.geojsonl when present.
+    reuse_ok = (
+        not use_sample()
+        and land_path.exists()
+        and land_path.stat().st_size > 1_000_000
+    )
+    if reuse_ok:
+        n_land = _count_lines(land_path)
+        print(f"[coast] reusing land.geojsonl ({n_land} polygons)")
+    else:
+        bb = chart_bbox()
+        print(
+            f"[coast] clipping OSM land ({shp}) to "
+            f"({bb['lon_min']},{bb['lat_min']})–({bb['lon_max']},{bb['lat_max']}) …"
+        )
+        try:
+            n_land = _write_land_geojsonl(shp, land_path)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[coast] OSM clip failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"[coast] wrote {n_land} land polygons → {land_path}")
 
-    print("[coast] filtering Natural Earth places (labels only) …")
-    n_places = _write_places_geojsonl(places_path, clip)
-    print(f"[coast] wrote {n_places} place labels → {places_path}")
+    n_places = _count_lines(OSM_PLACES)
+    n_roads = _count_lines(OSM_ROADS)
+    n_rivers = _count_lines(OSM_RIVERS)
+    if not OSM_WATER.exists():
+        OSM_WATER.write_text("")
+    n_water = _orient_water_geojsonl(OSM_WATER)
+    print(
+        f"[coast] OSM places={n_places} roads={n_roads} rivers={n_rivers} water={n_water}"
+    )
 
-    if n_land == 0:
-        print("[coast] no land features — abort", file=sys.stderr)
+    if n_land == 0 or n_places == 0:
+        print("[coast] missing land or places — abort", file=sys.stderr)
         return 1
 
     if OUT.exists():
         OUT.unlink()
 
-    # No densest-drop / coalesce — keep mid-zoom land tiles complete.
+    # Solid land fills; do not stroke land edges in MapLibre (split-grid seams).
+    # Water polygons paint sea-color on top of land (estuaries / harbour basins).
     cmd = [
         "tippecanoe",
         "-o",
@@ -223,10 +206,19 @@ def main() -> int:
         "--force",
         "--no-tile-size-limit",
         "--no-feature-limit",
+        "--detect-shared-borders",
+        "-r1",
+        "--tiny-polygon-size=0",
         "-L",
         f"land:{land_path}",
         "-L",
-        f"places:{places_path}",
+        f"water:{OSM_WATER}",
+        "-L",
+        f"places:{OSM_PLACES}",
+        "-L",
+        f"roads:{OSM_ROADS}",
+        "-L",
+        f"rivers:{OSM_RIVERS}",
     ]
     print("[coast] tippecanoe:", " ".join(cmd))
     subprocess.run(cmd, check=True)

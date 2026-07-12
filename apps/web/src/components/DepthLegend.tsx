@@ -5,8 +5,8 @@ export default function DepthLegend({ visible = true }: { visible?: boolean }) {
   if (!visible) return null;
 
   const stops: { label: string; color: string; width: number }[] = [
-    { label: "2–10 m", color: "#e2e8f0", width: 2.0 },
-    { label: "12–30 m", color: "#94a3b8", width: 1.5 },
+    { label: "2–5 m", color: "#e2e8f0", width: 2.0 },
+    { label: "10–20 m", color: "#94a3b8", width: 1.5 },
     { label: "50 m", color: "#64748b", width: 1.2 },
     { label: "100–200 m", color: "#475569", width: 0.9 },
   ];

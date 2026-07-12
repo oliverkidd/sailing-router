@@ -1,0 +1,25 @@
+# Heavy on-disk geo / forecast / tile artefacts — keep out of Cursor indexing.
+# Chart tiles live under apps/web/public/geo/*.pmtiles and are served from disk;
+# build sources and intermediates under data/ are tens of GB.
+
+data/
+apps/web/public/geo/*.pmtiles
+apps/web/public/geo/depth-variants/
+
+# Package / build artefacts
+node_modules/
+.next/
+out/
+.pnpm-store/
+**/.venv/
+venv/
+services/api/.venv/
+**/__pycache__/
+*.pyc
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Logs
+*.log
+.debug/

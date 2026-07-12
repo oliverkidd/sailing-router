@@ -129,6 +129,65 @@ export function mergeSeries(a: WindSeries, b: WindSeries): WindSeries {
   };
 }
 
+const HOUR_MS = 3600 * 1000;
+
+export function floorHourIso(iso: string): string {
+  const d = new Date(iso);
+  d.setUTCMinutes(0, 0, 0);
+  return d.toISOString();
+}
+
+export function hoursAheadIso(fromIso: string, hours: number): string {
+  const d = new Date(fromIso);
+  d.setUTCHours(d.getUTCHours() + hours);
+  return d.toISOString();
+}
+
+/** True when the series already has a frame for this UTC hour (±1 min). */
+export function seriesCoversHour(series: WindSeries, hourUtc: string): boolean {
+  const t = new Date(hourUtc).getTime();
+  return series.times.some((x) => Math.abs(new Date(x).getTime() - t) < 60_000);
+}
+
+/** Last hour of the contiguous forward run that includes focus (null if focus missing). */
+export function contiguousRunMax(series: WindSeries, focusHourUtc: string): string | null {
+  const focus = floorHourIso(focusHourUtc);
+  if (!seriesCoversHour(series, focus)) return null;
+  let cur = focus;
+  for (;;) {
+    const next = hoursAheadIso(cur, 1);
+    if (!seriesCoversHour(series, next)) return cur;
+    cur = next;
+  }
+}
+
+/** First contiguous missing sub-range inside [start, end] inclusive; null if fully covered. */
+export function missingRange(
+  series: WindSeries | null | undefined,
+  startUtc: string,
+  endUtc: string,
+): { start: string; end: string } | null {
+  const start = floorHourIso(startUtc);
+  const end = floorHourIso(endUtc);
+  if (new Date(end).getTime() < new Date(start).getTime()) return null;
+
+  let rangeStart: string | null = null;
+  let rangeEnd: string | null = null;
+  let cur = start;
+  while (new Date(cur).getTime() <= new Date(end).getTime()) {
+    const covered = !!series && seriesCoversHour(series, cur);
+    if (!covered) {
+      if (!rangeStart) rangeStart = cur;
+      rangeEnd = cur;
+    } else if (rangeStart) {
+      break;
+    }
+    cur = hoursAheadIso(cur, 1);
+  }
+  if (!rangeStart || !rangeEnd) return null;
+  return { start: rangeStart, end: rangeEnd };
+}
+
 /** Linear-in-time slice of a WindSeries into a single MeteoGrid. */
 export function sliceSeries(series: WindSeries, tUtc: string): MeteoGrid {
   const tMs = new Date(tUtc).getTime();
@@ -147,7 +206,13 @@ export function sliceSeries(series: WindSeries, tUtc: string): MeteoGrid {
 
   const t0 = timesMs[k0];
   const t1 = timesMs[k1];
-  const ft = k0 === k1 || t1 === t0 ? 0 : (tMs - t0) / (t1 - t0);
+  // Sparse on-demand hours: never interpolate across a multi-hour gap.
+  const ft =
+    k0 === k1 || t1 === t0 || t1 - t0 > HOUR_MS + 1000
+      ? tMs - t0 <= t1 - tMs
+        ? 0
+        : 1
+      : (tMs - t0) / (t1 - t0);
 
   const u0 = series.u[k0] ?? [];
   const v0 = series.v[k0] ?? [];

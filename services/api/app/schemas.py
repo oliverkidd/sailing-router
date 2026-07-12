@@ -131,6 +131,9 @@ class ElevationResponse(BaseModel):
     lon: float
     elevation_m: float | None
     depth_m: float | None = None
+    # When mosaic has nodata over water (common shoreward of the 2 m isobath),
+    # depth is only known as shallower than this chart contour.
+    depth_lt_m: float | None = None
     on_land: bool | None = None
 
 

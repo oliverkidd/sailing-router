@@ -9,6 +9,7 @@ import ForecastDropdown from "@/components/ForecastDropdown";
 import ForecastPicker from "@/components/ForecastPicker";
 import InstrumentCluster from "@/components/InstrumentCluster";
 import MapControls from "@/components/MapControls";
+import MapLoadOverlay, { type MapLoadKind } from "@/components/MapLoadOverlay";
 import RouteBuildProgress, { type ModelStatus } from "@/components/RouteBuildProgress";
 import RouteDetailPanel from "@/components/RouteDetailPanel";
 import RouteReview from "@/components/RouteReview";
@@ -25,16 +26,31 @@ import {
   saveStoredCourse,
   type MapBounds,
 } from "@/lib/mapOverlays";
-import { bboxContains, regionCellKey } from "@/lib/windTiles";
-import { fetchWindArea, mergeSeries, type WindSeries } from "@/lib/meteoGrid";
+import {
+  bboxContains,
+  regionBounds,
+  regionCellKey,
+  regionNeedsDenserReplace,
+} from "@/lib/windTiles";
+import {
+  contiguousRunMax,
+  fetchWindArea,
+  floorHourIso,
+  hoursAheadIso,
+  mergeSeries,
+  missingRange,
+  seriesCoversHour,
+  type WindSeries,
+} from "@/lib/meteoGrid";
 import type { BoatConfig, Course, ModelPreset, ModelRoute } from "@/lib/types";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
 const SERIES_MARGIN_DEG = 0.5;
-const BROWSE_DAY_H = 24;
+/** Scrubber range; browse wind uses focus + sliding prefetch. */
 const SCRUB_HORIZON_H = 120;
-const LAZY_EXTEND_LEAD_H = 6;
+/** Focus hour + (N-1) ahead on land; extend by N at penultimate. */
+const PREFETCH_WINDOW_H = 3;
 
 type WindCacheEntry = {
   series: WindSeries;
@@ -61,10 +77,8 @@ function routeTimeWindow(route: ModelRoute, departUtc: string): { start: string;
   };
 }
 
-function hoursAheadIso(fromIso: string, hours: number): string {
-  const d = new Date(fromIso);
-  d.setUTCHours(d.getUTCHours() + hours);
-  return d.toISOString();
+function capHour(iso: string, horizonEndUtc: string): string {
+  return new Date(iso).getTime() > new Date(horizonEndUtc).getTime() ? horizonEndUtc : iso;
 }
 
 const INITIAL_BOAT: BoatConfig = {
@@ -111,10 +125,22 @@ export default function Home() {
   const availableCacheRef = useRef<Map<string, ModelPreset[]>>(new Map());
   const availableAbortRef = useRef<AbortController | null>(null);
   const browseAbortRefs = useRef<Map<string, AbortController>>(new Map());
+  const prefetchAbortRefs = useRef<Map<string, AbortController>>(new Map());
+  const prefetchKeyRef = useRef<Map<string, string>>(new Map());
   const routeAbortRefs = useRef<Map<string, AbortController>>(new Map());
-  const lazyAbortRef = useRef<AbortController | null>(null);
   const browseCacheRef = useRef(browseCache);
   browseCacheRef.current = browseCache;
+
+  // Drop other models' wind grids when switching tab — tiles stay on disk.
+  useEffect(() => {
+    setBrowseCache((prev) => {
+      if (!activeModelId) return {};
+      const keep = prev[activeModelId];
+      if (!keep) return {};
+      if (Object.keys(prev).length === 1 && prev[activeModelId]) return prev;
+      return { [activeModelId]: keep };
+    });
+  }, [activeModelId]);
 
   const horizonEndUtc = useMemo(
     () => hoursAheadIso(horizonStartUtc, SCRUB_HORIZON_H),
@@ -129,8 +155,32 @@ export default function Home() {
     (activeModelId && browseCache[activeModelId]?.series) ||
     null;
 
-  const activeFetching =
-    !!activeModelId && overlayStatus[activeModelId] === "fetching" && !windSeries;
+  const scrubHourUtc = floorHourIso(overlayTimeUtc);
+  const activeStatus = activeModelId ? overlayStatus[activeModelId] : undefined;
+  const hourUncovered =
+    routes.length === 0 &&
+    !!activeModelId &&
+    selected.has(activeModelId) &&
+    apiUp === true &&
+    (!windSeries || !seriesCoversHour(windSeries, scrubHourUtc));
+  // Show loading as soon as the scrub hour isn't covered (before the debounced fetch),
+  // but stop if that hour already failed.
+  const windLoading =
+    activeStatus === "fetching" || (hourUncovered && activeStatus !== "error");
+  const routeLoading = prepState === "preparing" || running;
+
+  let mapLoadKind: MapLoadKind | null = null;
+  let mapLoadLabel = "";
+  if (routeLoading) {
+    mapLoadKind = "route";
+    mapLoadLabel = prepState === "preparing" ? "Preparing route data…" : "Routing…";
+  } else if (windLoading && !windSeries) {
+    mapLoadKind = "wind-initial";
+    mapLoadLabel = activeModelId ? `Loading ${activeModelId}` : "Loading forecast";
+  } else if (windLoading) {
+    mapLoadKind = "wind-hour";
+    mapLoadLabel = `Loading ${scrubHourUtc.slice(11, 16)} UTC`;
+  }
 
   const boatAtTime = useMemo(() => {
     if (!activeRoute?.legs?.length) return null;
@@ -195,31 +245,46 @@ export default function Home() {
     setOverlayStatus((prev) => ({ ...prev, [id]: status }));
   }, []);
 
-  const fetchBrowseModel = useCallback(
-    (modelId: string, bounds: MapBounds) => {
+  const fetchBrowseFocus = useCallback(
+    (
+      modelId: string,
+      viewportBounds: MapBounds,
+      atUtc: string,
+      merge: boolean,
+      onReady?: () => void,
+    ) => {
       browseAbortRefs.current.get(modelId)?.abort();
       const ac = new AbortController();
       browseAbortRefs.current.set(modelId, ac);
-      const start = currentForecastHourUtc();
-      const end = hoursAheadIso(start, BROWSE_DAY_H);
+      const hour = floorHourIso(atUtc);
+      // Request the padded cell so merges stay on one grid across pans.
+      const reqBounds = regionBounds(viewportBounds);
+      const cacheRegion = reqBounds;
       setStatus(modelId, "fetching");
       if (modelId === activeModelId) setOverlayMsg(null);
 
-      fetchWindArea(bounds, modelId, start, end, ac.signal)
+      fetchWindArea(reqBounds, modelId, hour, hour, ac.signal)
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
-            setBrowseCache((prev) => ({
-              ...prev,
-              [modelId]: {
-                series,
-                region: series.bbox ?? bounds,
-                loadedEndUtc: series.times[series.times.length - 1] ?? end,
-              },
-            }));
+            setBrowseCache((prev) => {
+              const existing = prev[modelId];
+              const merged =
+                merge && existing ? mergeSeries(existing.series, series) : series;
+              const last = merged.times[merged.times.length - 1] ?? hour;
+              // Chart tiles stay on disk; only keep the active model's wind in RAM.
+              return {
+                [modelId]: {
+                  series: merged,
+                  region: merge && existing ? existing.region : cacheRegion,
+                  loadedEndUtc: last,
+                },
+              };
+            });
             setStatus(modelId, "ready");
             if (modelId === activeModelId) setOverlayMsg(null);
-          } else {
+            onReady?.();
+          } else if (!merge) {
             setBrowseCache((prev) => {
               const next = { ...prev };
               delete next[modelId];
@@ -228,6 +293,11 @@ export default function Home() {
             setStatus(modelId, "error");
             if (modelId === activeModelId) {
               setOverlayMsg(error ? `Wind unavailable: ${error}` : "Wind unavailable");
+            }
+          } else {
+            setStatus(modelId, "error");
+            if (modelId === activeModelId && error) {
+              setOverlayMsg(`Wind unavailable: ${error}`);
             }
           }
         })
@@ -241,6 +311,100 @@ export default function Home() {
         });
     },
     [activeModelId, setStatus],
+  );
+
+  const prefetchBrowseRange = useCallback(
+    (modelId: string, viewportBounds: MapBounds, startUtc: string, endUtc: string) => {
+      const start = floorHourIso(startUtc);
+      const end = floorHourIso(endUtc);
+      if (new Date(end).getTime() < new Date(start).getTime()) return;
+
+      const entry = browseCacheRef.current[modelId];
+      const gap = missingRange(entry?.series, start, end);
+      if (!gap) return;
+
+      const reqBounds = regionBounds(viewportBounds);
+      const key = `${gap.start}|${gap.end}|${reqBounds.lat_min},${reqBounds.lon_min},${reqBounds.lat_max},${reqBounds.lon_max}`;
+      if (prefetchKeyRef.current.get(modelId) === key) return;
+
+      prefetchAbortRefs.current.get(modelId)?.abort();
+      const ac = new AbortController();
+      prefetchAbortRefs.current.set(modelId, ac);
+      prefetchKeyRef.current.set(modelId, key);
+
+      fetchWindArea(reqBounds, modelId, gap.start, gap.end, ac.signal)
+        .then(({ series }) => {
+          if (ac.signal.aborted || !series) return;
+          setBrowseCache((prev) => {
+            const existing = prev[modelId];
+            if (!existing) {
+              return {
+                [modelId]: {
+                  series,
+                  region: reqBounds,
+                  loadedEndUtc: series.times[series.times.length - 1] ?? gap.end,
+                },
+              };
+            }
+            const merged = mergeSeries(existing.series, series);
+            return {
+              [modelId]: {
+                series: merged,
+                region: existing.region,
+                loadedEndUtc: merged.times[merged.times.length - 1] ?? existing.loadedEndUtc,
+              },
+            };
+          });
+        })
+        .catch((e) => {
+          if ((e as Error).name === "AbortError") return;
+        })
+        .finally(() => {
+          if (prefetchKeyRef.current.get(modelId) === key) {
+            prefetchKeyRef.current.delete(modelId);
+          }
+        });
+    },
+    [],
+  );
+
+  const scheduleBrowseWindow = useCallback(
+    (
+      modelId: string,
+      viewportBounds: MapBounds,
+      focusUtc: string,
+      horizonEnd: string,
+      opts?: { forceReplace?: boolean },
+    ) => {
+      const focus = floorHourIso(focusUtc);
+      const entry = browseCacheRef.current[modelId];
+      const reqRegion = regionBounds(viewportBounds);
+      const inRegion = !!(entry && bboxContains(entry.region, viewportBounds, 0.05));
+      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.region, reqRegion));
+      const merge = inRegion && !opts?.forceReplace && !denserNeeded;
+      const needFocus = !merge || !entry || !seriesCoversHour(entry.series, focus);
+
+      const kickPrefetch = () => {
+        const aheadEnd = capHour(hoursAheadIso(focus, PREFETCH_WINDOW_H - 1), horizonEnd);
+        const prefetchStart = hoursAheadIso(focus, 1);
+        if (new Date(prefetchStart).getTime() <= new Date(aheadEnd).getTime()) {
+          prefetchBrowseRange(modelId, viewportBounds, prefetchStart, aheadEnd);
+        }
+      };
+
+      if (needFocus) {
+        if (!merge) {
+          prefetchAbortRefs.current.get(modelId)?.abort();
+          prefetchKeyRef.current.delete(modelId);
+        }
+        // After a cell replace, wait for focus so prefetch can't be wiped by merge=false.
+        fetchBrowseFocus(modelId, viewportBounds, focus, merge, merge ? undefined : kickPrefetch);
+        if (merge) queueMicrotask(kickPrefetch);
+      } else {
+        kickPrefetch();
+      }
+    },
+    [fetchBrowseFocus, prefetchBrowseRange],
   );
 
   // Load route-window series into routeCache per route model (no refetch on tab switch).
@@ -283,62 +447,62 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routes, courseRouteKey, course, apiUp, setStatus]);
 
-  // Browse: for each selected model, fetch when missing or viewport left cached region.
+  // Browse: only the active model — wind series stay small in RAM; chart tiles are on disk.
   useEffect(() => {
     if (routes.length > 0) return;
     if (!viewport || apiUp !== true) return;
-    if (selected.size === 0) return;
+    if (!activeModelId || !selected.has(activeModelId)) return;
 
     const t = setTimeout(() => {
-      for (const id of selected) {
-        const entry = browseCacheRef.current[id];
-        if (entry && bboxContains(entry.region, viewport, 0.05)) continue;
-        fetchBrowseModel(id, viewport);
+      const id = activeModelId;
+      const focus = floorHourIso(overlayTimeUtc);
+      const reqRegion = regionBounds(viewport);
+      const entry = browseCacheRef.current[id];
+      const inRegion = !!(entry && bboxContains(entry.region, viewport, 0.05));
+      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.region, reqRegion));
+      if (inRegion && !denserNeeded && entry && seriesCoversHour(entry.series, focus)) {
+        const aheadEnd = capHour(hoursAheadIso(focus, PREFETCH_WINDOW_H - 1), horizonEndUtc);
+        const prefetchStart = hoursAheadIso(focus, 1);
+        if (new Date(prefetchStart).getTime() <= new Date(aheadEnd).getTime()) {
+          prefetchBrowseRange(id, viewport, prefetchStart, aheadEnd);
+        }
+        return;
       }
+      scheduleBrowseWindow(id, viewport, focus, horizonEndUtc, {
+        forceReplace: !inRegion || denserNeeded,
+      });
     }, 250);
 
     return () => clearTimeout(t);
-  }, [viewport, selected, apiUp, routes.length, fetchBrowseModel]);
+  }, [
+    viewport,
+    selected,
+    activeModelId,
+    apiUp,
+    routes.length,
+    overlayTimeUtc,
+    horizonEndUtc,
+    scheduleBrowseWindow,
+    prefetchBrowseRange,
+  ]);
 
-  // Lazy-extend active browse model near loaded edge.
+  // Penultimate of contiguous run → prefetch next PREFETCH_WINDOW_H hours after runMax.
   useEffect(() => {
     if (routes.length > 0) return;
     if (!viewport || !activeModelId || apiUp !== true) return;
     const entry = browseCache[activeModelId];
-    if (!entry) return;
+    if (!entry || !bboxContains(entry.region, viewport, 0.05)) return;
 
-    const cur = new Date(overlayTimeUtc).getTime();
-    const loadedEnd = new Date(entry.loadedEndUtc).getTime();
-    const horizonEnd = new Date(horizonEndUtc).getTime();
-    if (cur < loadedEnd - LAZY_EXTEND_LEAD_H * 3600 * 1000) return;
-    if (loadedEnd >= horizonEnd - 3600 * 1000) return;
+    const focus = floorHourIso(overlayTimeUtc);
+    const runMax = contiguousRunMax(entry.series, focus);
+    if (!runMax) return;
+    const penultimate = hoursAheadIso(runMax, -1);
+    if (focus !== penultimate) return;
 
-    const start = entry.loadedEndUtc;
-    const end = hoursAheadIso(start, BROWSE_DAY_H);
-    lazyAbortRef.current?.abort();
-    const ac = new AbortController();
-    lazyAbortRef.current = ac;
-    fetchWindArea(viewport, activeModelId, start, end, ac.signal)
-      .then(({ series }) => {
-        if (ac.signal.aborted || !series) return;
-        setBrowseCache((prev) => {
-          const curEntry = prev[activeModelId];
-          if (!curEntry) return prev;
-          return {
-            ...prev,
-            [activeModelId]: {
-              series: mergeSeries(curEntry.series, series),
-              region: curEntry.region,
-              loadedEndUtc: series.times[series.times.length - 1] ?? end,
-            },
-          };
-        });
-      })
-      .catch((e) => {
-        if ((e as Error).name === "AbortError") return;
-      });
-
-    return () => ac.abort();
+    const extendStart = hoursAheadIso(runMax, 1);
+    const extendEnd = capHour(hoursAheadIso(runMax, PREFETCH_WINDOW_H), horizonEndUtc);
+    if (new Date(extendStart).getTime() > new Date(extendEnd).getTime()) return;
+    prefetchBrowseRange(activeModelId, viewport, extendStart, extendEnd);
   }, [
     overlayTimeUtc,
     browseCache,
@@ -347,6 +511,7 @@ export default function Home() {
     apiUp,
     routes.length,
     horizonEndUtc,
+    prefetchBrowseRange,
   ]);
 
   // Drop selection entries that are no longer available for this area (don't auto-add).
@@ -432,6 +597,8 @@ export default function Home() {
     if (wasSelected) {
       next.delete(id);
       browseAbortRefs.current.get(id)?.abort();
+      prefetchAbortRefs.current.get(id)?.abort();
+      prefetchKeyRef.current.delete(id);
       setBrowseCache((c) => {
         const n = { ...c };
         delete n[id];
@@ -449,7 +616,9 @@ export default function Home() {
       next.add(id);
       setActiveModelId(id);
       if (viewport && apiUp === true && routes.length === 0) {
-        fetchBrowseModel(id, viewport);
+        scheduleBrowseWindow(id, viewport, overlayTimeUtc, horizonEndUtc, {
+          forceReplace: true,
+        });
       }
     }
     setSelected(next);
@@ -534,11 +703,7 @@ export default function Home() {
   }, []);
 
   const activeError =
-    !!activeModelId &&
-    overlayStatus[activeModelId] === "error" &&
-    !windSeries
-      ? overlayMsg
-      : null;
+    !!activeModelId && overlayStatus[activeModelId] === "error" ? overlayMsg : null;
 
   return (
     <div id="app-shell">
@@ -597,11 +762,10 @@ export default function Home() {
           onTime={setOverlayTimeUtc}
           horizonStartUtc={horizonStartUtc}
           horizonEndUtc={horizonEndUtc}
+          loading={windLoading && routes.length === 0}
         />
         {playbackLeg && <InstrumentCluster leg={playbackLeg} />}
-        {activeFetching && (
-          <div className="map-load-chip">Loading {activeModelId}…</div>
-        )}
+        <MapLoadOverlay kind={mapLoadKind} label={mapLoadLabel} />
         {activeError && <div className="map-error-banner">{activeError}</div>}
         <MapControls
           toggles={{ showWind }}

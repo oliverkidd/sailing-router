@@ -47,19 +47,24 @@ def write_field(field: WindField, cycle: datetime, region: BBox) -> Path:
 
 
 def read_field(path: Path | str) -> WindField:
-    """Load a WindField from a Zarr group."""
+    """Load a WindField from a Zarr group on disk (float32; close after read)."""
     path = Path(path)
     ds = xr.open_zarr(path)
-    model_id = str(ds.attrs.get("model_id", path.stem.split("__")[0]))
-    times = ds["time"].values
-    epochs = []
-    for t0 in np.atleast_1d(times):
-        epochs.append(float(np.datetime64(t0, "s").astype("datetime64[s]").astype(np.int64)))
-    return WindField.build(
-        model_id,
-        epochs,
-        np.asarray(ds["lat"].values, dtype=float),
-        np.asarray(ds["lon"].values, dtype=float),
-        np.asarray(ds["u10"].values, dtype=float),
-        np.asarray(ds["v10"].values, dtype=float),
-    )
+    try:
+        model_id = str(ds.attrs.get("model_id", path.stem.split("__")[0]))
+        times = ds["time"].values
+        epochs = []
+        for t0 in np.atleast_1d(times):
+            epochs.append(
+                float(np.datetime64(t0, "s").astype("datetime64[s]").astype(np.int64))
+            )
+        return WindField.build(
+            model_id,
+            epochs,
+            np.asarray(ds["lat"].values, dtype=np.float64),
+            np.asarray(ds["lon"].values, dtype=np.float64),
+            np.asarray(ds["u10"].values, dtype=np.float32),
+            np.asarray(ds["v10"].values, dtype=np.float32),
+        )
+    finally:
+        ds.close()

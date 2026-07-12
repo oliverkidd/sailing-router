@@ -1,15 +1,15 @@
 "use client";
 
 import { useMemo } from "react";
-import { windyColor } from "@/lib/colors";
+import { WIND_SPEED_MAX_KN, windScale } from "@/lib/colors";
 
-const TICKS = [0, 5, 10, 15, 20, 25, 30, 35, 40] as const;
+const TICKS = [0, 10, 20, 30, 40, 50, 60] as const;
 
 export default function WindLegend({ visible }: { visible: boolean }) {
   const gradient = useMemo(() => {
     const stops: string[] = [];
-    for (let kn = 0; kn <= 40; kn++) {
-      stops.push(`${windyColor(kn)} ${(kn / 40) * 100}%`);
+    for (let kn = 0; kn <= WIND_SPEED_MAX_KN; kn++) {
+      stops.push(`${windScale(kn).color} ${(kn / WIND_SPEED_MAX_KN) * 100}%`);
     }
     return `linear-gradient(to right, ${stops.join(", ")})`;
   }, []);
@@ -17,14 +17,14 @@ export default function WindLegend({ visible }: { visible: boolean }) {
   if (!visible) return null;
 
   return (
-    <div className="wind-legend" aria-label="Wind speed colour scale, 0 to 40 knots">
+    <div className="wind-legend" aria-label="Wind speed colour scale, 0 to 60 knots">
       <div className="wind-legend-bar" style={{ background: gradient }} />
       <div className="wind-legend-ticks">
         {TICKS.map((kn) => (
           <span
             key={kn}
             className="wind-legend-tick"
-            style={{ left: `${(kn / 40) * 100}%` }}
+            style={{ left: `${(kn / WIND_SPEED_MAX_KN) * 100}%` }}
           >
             {kn}
           </span>

@@ -82,19 +82,25 @@ Without these keys, the models are simply omitted from `/models/available`.
 
 ### Nautical chart tiles (UK + Europe)
 
-The map baseline is **static vector tiles** at `apps/web/public/geo/`
+The map baseline is **static vector tiles on disk** at `apps/web/public/geo/`
 (`coastline.pmtiles`, `depth.pmtiles`) for the region `lon -25..42, lat 30..72`.
-These files are **not in git** (they are hundreds of MB to >1 GB) — build them
-locally once, then `npm run dev` serves them as static assets.
+MapLibre streams them via HTTP Range — they are **not** loaded into API or
+browser RAM as whole archives. Files are **not in git** (hundreds of MB) —
+build locally once; `npm run dev` serves them as static assets.
+
+Wind forecasts are also **disk-backed** (`data/cache/forecast/*.zarr`); the API
+keeps at most one field in process memory and re-reads from Zarr as needed.
 
 **Sources (no low-res fallbacks):** OpenStreetMap land polygons for coast/land;
-EMODnet Bathymetry DTM for depth isobaths (2 m steps through 30 m, then 50/100/200 m).
+EMODnet Bathymetry DTM for depth isobaths (2, 4, 5, 10, 20, 50, 100, 200 m).
 Builds fail if either source is unavailable.
 
 ```bash
 brew install tippecanoe gdal
 cd services/api && source .venv/bin/activate && pip install rasterio numpy
 cd ../.. && make tiles
+# Optional: free ~30GB of build intermediates after PMTiles exist
+make clean-tile-build
 ```
 
 For a deployed app, host the same PMTiles on object storage / a CDN and point

@@ -2,6 +2,13 @@
 """Download OSM land polygons (sole coastline source) for chart tile builds.
 
 Source: https://osmdata.openstreetmap.de/ — land-polygons-split-4326.zip
+
+We intentionally use the *split* package: complete land polygons yield
+continent-scale MultiPolygons (millions of vertices) that tippecanoe cannot
+reliably clip into mid-zoom tiles (empty land / navy holes). Split cells are
+manageable; tippecanoe --detect-shared-borders hides artificial cell edges so
+coastline outlines stay true coasts.
+
 Fails hard if the download or extract is missing / incomplete.
 """
 
@@ -17,7 +24,7 @@ OSM_DIR = ROOT / "data" / "geo" / "osm"
 ZIP_PATH = OSM_DIR / "land-polygons-split-4326.zip"
 SHP_PATH = OSM_DIR / "land-polygons-split-4326" / "land_polygons.shp"
 
-# Documented download URL (WGS84, large polygons split for rendering).
+# WGS84 land polygons pre-split into a grid (required for tippecanoe reliability).
 OSM_LAND_URL = "https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip"
 
 
@@ -53,8 +60,10 @@ def main() -> int:
         return 1
 
     if not SHP_PATH.exists():
-        # Some archives nest differently — search.
-        matches = list(OSM_DIR.rglob("land_polygons.shp"))
+        matches = sorted(
+            (ROOT / "data" / "geo" / "osm").rglob("land_polygons.shp"),
+            key=lambda p: (0 if "split" in str(p) else 1, str(p)),
+        )
         if not matches:
             print("[osm] land_polygons.shp missing after extract — abort", file=sys.stderr)
             return 1

@@ -8,6 +8,8 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
+
 from . import catalog, store_wind
 from .config import MODEL_PRESETS_BY_ID, WIND_TTL_S, model_is_configured
 from .forecast import get_source
@@ -29,8 +31,10 @@ logger = logging.getLogger(__name__)
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
-# In-memory LRU of recently read fields (keyed by zarr path).
-_LRU_MAX = 8
+# Tiny in-process hint only — canonical fields live on disk as Zarr under
+# data/cache/forecast/. Holding many full grids here blows RAM (Cursor /
+# API OOM / workspace disconnects). Re-read from Zarr on miss.
+_LRU_MAX = 1
 _lru: OrderedDict[str, WindField] = OrderedDict()
 _lru_guard = threading.Lock()
 
@@ -135,6 +139,24 @@ def get_area_field(
                 logger.warning("cache read failed %s: %s", row.zarr_path, exc)
                 cached = None
 
+        # Covering-region cache hits can have a denser/wider grid than this
+        # request's canonical axes — regrid onto (lats_t, lons_t) before use.
+        if cached is not None and (
+            cached.lats.size != lats_t.size
+            or cached.lons.size != lons_t.size
+            or not np.allclose(cached.lats, lats_t)
+            or not np.allclose(cached.lons, lons_t)
+        ):
+            try:
+                cached = cached.regrid(lats_t, lons_t)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "cache regrid failed for %s (discarding covering cache): %s",
+                    model_id,
+                    exc,
+                )
+                cached = None
+
         have: set[float] = set()
         if cached is not None:
             # Round to whole seconds so float noise doesn't create false misses.
@@ -179,7 +201,7 @@ def get_display_series(
     start: datetime,
     end: datetime,
 ) -> dict | None:
-    """Return a multi-hour series payload; downsample only when viewport is large."""
+    """Return a multi-hour series payload; downsample under MAX_DISPLAY_PTS when large."""
     field = get_area_field(model_id, bbox, start=start, end=end)
     if field is None:
         return None

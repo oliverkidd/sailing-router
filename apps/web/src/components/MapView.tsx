@@ -31,9 +31,74 @@ function ensurePmtilesProtocol() {
 }
 
 /** Dark nautical chart — land + depth isobaths from local PMTiles (no runtime fetch). */
+/** Bump when coastline.pmtiles / depth.pmtiles are rebuilt so browsers skip stale Range caches. */
+const CHART_TILE_VERSION = "20260712full";
+
+/** Uniform isobath stroke — slate, low opacity. */
+const DEPTH_LINE_COLOR = "#475569";
+const DEPTH_LINE_PAINT: maplibregl.LineLayerSpecification["paint"] = {
+  "line-color": DEPTH_LINE_COLOR,
+  "line-width": [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    4,
+    0.4,
+    10,
+    0.7,
+    14,
+    1.0,
+  ],
+  "line-opacity": 0.32,
+};
+
+/**
+ * Shallow→deep fill bands (source-layer depth_fill).
+ * Soft wash: pale blue inshore → white offshore (low chroma).
+ */
+const DEPTH_SHALLOW_FILL = "#c5d9e6";
+const DEPTH_BAND_PAINT: maplibregl.FillLayerSpecification["paint"] = {
+  "fill-color": [
+    "match",
+    ["get", "band"],
+    "0-2",
+    DEPTH_SHALLOW_FILL,
+    "2-4",
+    "#d2e2ec",
+    "4-5",
+    "#dde9f0",
+    "5-10",
+    "#e8f0f5",
+    "10-50",
+    "#f3f7fa",
+    "50+",
+    "#ffffff",
+    "#ffffff",
+  ],
+  "fill-opacity": 1,
+};
+
+const DEPTH_LABEL_LAYOUT: maplibregl.SymbolLayerSpecification["layout"] = {
+  "symbol-placement": "line",
+  "symbol-spacing": 280,
+  "text-field": ["concat", ["to-string", ["get", "depth"]], "m"],
+  "text-size": ["interpolate", ["linear"], ["zoom"], 8, 9, 12, 10],
+  "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+  "text-max-angle": 30,
+  "text-optional": true,
+  "text-allow-overlap": false,
+  "text-padding": 2,
+};
+
+const DEPTH_LABEL_PAINT: maplibregl.SymbolLayerSpecification["paint"] = {
+  "text-color": "#475569",
+  "text-halo-width": 0,
+  "text-opacity": 0.9,
+};
+
 function buildChartStyle(origin: string): maplibregl.StyleSpecification {
-  const coastUrl = `pmtiles://${origin}/geo/coastline.pmtiles`;
-  const depthUrl = `pmtiles://${origin}/geo/depth.pmtiles`;
+  const coastUrl = `pmtiles://${origin}/geo/coastline.pmtiles?v=${CHART_TILE_VERSION}`;
+  const depthUrl = `pmtiles://${origin}/geo/depth.pmtiles?v=${CHART_TILE_VERSION}`;
 
   return {
     version: 8,
@@ -46,7 +111,15 @@ function buildChartStyle(origin: string): maplibregl.StyleSpecification {
       {
         id: "background",
         type: "background",
-        paint: { "background-color": "#0a1628" },
+        paint: { "background-color": "#ffffff" },
+      },
+      {
+        id: "depth-fill",
+        type: "fill",
+        source: "depth",
+        "source-layer": "depth_fill",
+        minzoom: 4,
+        paint: DEPTH_BAND_PAINT,
       },
       {
         id: "depth-line",
@@ -54,45 +127,7 @@ function buildChartStyle(origin: string): maplibregl.StyleSpecification {
         source: "depth",
         "source-layer": "depth",
         minzoom: 4,
-        paint: {
-          "line-color": [
-            "interpolate",
-            ["linear"],
-            ["get", "depth"],
-            2,
-            "#e2e8f0",
-            10,
-            "#94a3b8",
-            30,
-            "#64748b",
-            50,
-            "#64748b",
-            200,
-            "#475569",
-          ],
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            4,
-            ["case", ["<=", ["get", "depth"], 10], 0.9, 0.4],
-            10,
-            ["case", ["<=", ["get", "depth"], 10], 1.5, 0.7],
-            14,
-            ["case", ["<=", ["get", "depth"], 10], 2.2, 1.0],
-          ],
-          "line-opacity": [
-            "interpolate",
-            ["linear"],
-            ["get", "depth"],
-            2,
-            0.85,
-            50,
-            0.55,
-            200,
-            0.35,
-          ],
-        },
+        paint: DEPTH_LINE_PAINT,
       },
       {
         id: "depth-label",
@@ -100,23 +135,8 @@ function buildChartStyle(origin: string): maplibregl.StyleSpecification {
         source: "depth",
         "source-layer": "depth",
         minzoom: 8,
-        layout: {
-          "symbol-placement": "line",
-          "symbol-spacing": 280,
-          "text-field": ["concat", ["to-string", ["get", "depth"]], "m"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 8, 9, 12, 11],
-          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
-          "text-max-angle": 30,
-          "text-optional": true,
-          "text-allow-overlap": false,
-          "text-padding": 2,
-        },
-        paint: {
-          "text-color": "#cbd5e1",
-          "text-halo-color": "rgba(10, 22, 40, 0.85)",
-          "text-halo-width": 1.5,
-          "text-opacity": 0.9,
-        },
+        layout: DEPTH_LABEL_LAYOUT,
+        paint: DEPTH_LABEL_PAINT,
       },
       {
         id: "land-fill",
@@ -124,57 +144,175 @@ function buildChartStyle(origin: string): maplibregl.StyleSpecification {
         source: "coastline",
         "source-layer": "land",
         paint: {
-          "fill-color": "#64748b",
+          "fill-color": "#dddddd",
           "fill-opacity": 1,
         },
       },
+      // Estuaries / riverbanks / harbour basins — shallow blue when no bathymetry.
       {
-        id: "coastline-line",
+        id: "water-fill",
+        type: "fill",
+        source: "coastline",
+        "source-layer": "water",
+        paint: {
+          "fill-color": DEPTH_SHALLOW_FILL,
+          "fill-opacity": 1,
+        },
+      },
+      // Windy-like subtle roads / rivers on land (under labels).
+      {
+        id: "roads",
         type: "line",
         source: "coastline",
-        "source-layer": "land",
+        "source-layer": "roads",
+        minzoom: 5,
         paint: {
-          "line-color": "#e2e8f0",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.0, 8, 1.6, 12, 2.2],
-          "line-opacity": 0.95,
+          "line-color": "#94a3b8",
+          "line-opacity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            5,
+            0.18,
+            9,
+            0.28,
+            13,
+            0.36,
+          ],
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            5,
+            ["match", ["get", "kind"], "motorway", 1.2, "trunk", 1.0, 0.5],
+            10,
+            [
+              "match",
+              ["get", "kind"],
+              "motorway",
+              2.2,
+              "trunk",
+              1.6,
+              "primary",
+              1.2,
+              0.7,
+            ],
+            14,
+            [
+              "match",
+              ["get", "kind"],
+              "motorway",
+              3.2,
+              "trunk",
+              2.4,
+              "primary",
+              1.8,
+              1.1,
+            ],
+          ],
         },
+      },
+      {
+        id: "rivers",
+        type: "line",
+        source: "coastline",
+        "source-layer": "rivers",
+        minzoom: 9,
+        paint: {
+          // Faint grey on white chart water.
+          "line-color": "#cbd5e1",
+          "line-opacity": 0.45,
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            9,
+            0.4,
+            14,
+            0.9,
+          ],
+        },
+      },
+      {
+        id: "river-labels",
+        type: "symbol",
+        source: "coastline",
+        "source-layer": "rivers",
+        minzoom: 9,
+        layout: {
+          "symbol-placement": "line",
+          "symbol-spacing": 320,
+          "text-field": ["get", "name"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 9, 9, 13, 11],
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-max-angle": 30,
+          "text-optional": true,
+          "text-padding": 2,
+        },
+        paint: {
+          "text-color": "#64748b",
+          "text-halo-width": 0,
+          "text-opacity": 0.75,
+        },
+        filter: ["!=", ["get", "name"], ""],
       },
       {
         id: "place-labels",
         type: "symbol",
         source: "coastline",
         "source-layer": "places",
-        minzoom: 5,
+        minzoom: 4,
         layout: {
           "text-field": ["get", "name"],
-          // MapLibre allows only one zoom-based interpolate/step per expression.
           "text-size": [
             "interpolate",
             ["linear"],
             ["zoom"],
-            5,
-            ["match", ["get", "kind"], "island", 11, 9],
-            10,
-            ["match", ["get", "kind"], "island", 14, 12],
+            4,
+            ["match", ["get", "kind"], "city", 12, "island", 11, "town", 10, "harbour", 10, 9],
+            9,
+            [
+              "match",
+              ["get", "kind"],
+              "city",
+              14,
+              "island",
+              13,
+              "town",
+              12,
+              "harbour",
+              11,
+              10,
+            ],
+            13,
+            [
+              "match",
+              ["get", "kind"],
+              "city",
+              16,
+              "island",
+              14,
+              "town",
+              13,
+              "harbour",
+              12,
+              11,
+            ],
           ],
-          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
           "text-anchor": "center",
           "text-optional": true,
-          "text-padding": 4,
+          "text-padding": 2,
           "text-max-width": 10,
           "text-allow-overlap": false,
         },
         paint: {
-          "text-color": ["match", ["get", "kind"], "island", "#e2e8f0", "#cbd5e1"],
-          "text-halo-color": "rgba(10, 22, 40, 0.9)",
-          "text-halo-width": 1.8,
+          "text-color": "#334155",
+          "text-halo-color": "rgba(15, 23, 42, 0.2)",
+          "text-halo-width": 0.8,
+          "text-halo-blur": 0.6,
           "text-opacity": 0.92,
         },
-        filter: [
-          "any",
-          ["<=", ["get", "rank"], 4],
-          [">=", ["zoom"], 7],
-        ],
       },
     ],
   };
@@ -315,7 +453,7 @@ export default function MapView({
       center: REGION_CENTER,
       zoom: DEFAULT_ZOOM,
       minZoom: MIN_ZOOM,
-      maxZoom: 14,
+      maxZoom: 18,
       maxBounds: REGION_MAX_BOUNDS,
       attributionControl: { compact: true },
     });
@@ -336,9 +474,8 @@ export default function MapView({
       loadedRef.current = true;
       const empty = { type: "FeatureCollection" as const, features: [] };
 
-      // Wind under depth + land: background → wind → depth → land → labels → routes
-      windHeat.attach(map, "depth-line");
-
+      // Depth → land → wind → routes (forecast above chart, under route overlays)
+      windHeat.attach(map);
 
       try {
         const arrowImg = await svgToImage(WIND_ARROW_SVG, 48);
@@ -348,8 +485,7 @@ export default function MapView({
       } catch (e) {
         console.warn("[map] wind arrow icon failed to load", e);
       }
-      windArrows.attach(map, "depth-line");
-
+      windArrows.attach(map);
 
       map.addSource("routes", { type: "geojson", data: routesToFeatureCollection([]) });
       map.addLayer({
@@ -425,14 +561,19 @@ export default function MapView({
         map.getCanvas().style.cursor = "";
       });
 
-      // Keep forecast overlays under land; place labels above wind/depth for readability.
-      // Wind was inserted before depth-line; do not lift it above land.
-      if (map.getLayer("place-labels") && map.getLayer("routes")) {
-        try {
-          map.moveLayer("place-labels", "routes");
-        } catch {
-          /* layer order optional */
+      // Wind under place labels under routes.
+      try {
+        if (map.getLayer("wind-heatmap-canvas") && map.getLayer("routes")) {
+          map.moveLayer("wind-heatmap-canvas", "routes");
         }
+        if (map.getLayer("wind-arrows") && map.getLayer("routes")) {
+          map.moveLayer("wind-arrows", "routes");
+        }
+        if (map.getLayer("place-labels") && map.getLayer("routes")) {
+          map.moveLayer("place-labels", "routes");
+        }
+      } catch {
+        /* layer order optional */
       }
 
       emitViewport();
@@ -443,6 +584,7 @@ export default function MapView({
       emitViewport();
       const grid = windGridRef.current;
       if (grid && propsRef.current.showWind) {
+        windHeatRef.current?.syncViewport();
         windArrowsRef.current?.setGrid(grid, { immediate: true });
       }
     }, 350);

@@ -50,3 +50,46 @@ export function bboxContains(outer: MapBounds, inner: MapBounds, margin = 0): bo
     outer.lon_max + margin >= inner.lon_max
   );
 }
+
+/** Lat×lon span product (degrees²) for region size comparisons. */
+export function bboxAreaDeg2(b: MapBounds): number {
+  return Math.max(0, b.lat_max - b.lat_min) * Math.max(0, b.lon_max - b.lon_min);
+}
+
+/**
+ * True when `next` is meaningfully smaller than `cached` (zoom-in).
+ * Browse should force-replace rather than reuse the coarse large-region series.
+ */
+export function regionNeedsDenserReplace(
+  cached: MapBounds,
+  next: MapBounds,
+  areaRatio = 0.5,
+): boolean {
+  const a = bboxAreaDeg2(cached);
+  if (a <= 0) return false;
+  return bboxAreaDeg2(next) / a < areaRatio;
+}
+
+/** Matches server REGION_PAD / REGION_SNAP in services/api/app/util/bbox.py. */
+export const REGION_PAD_DEG = 2.0;
+export const REGION_SNAP_DEG = 2.0;
+
+/** Expand + snap viewport to the server GRIB cache cell (pad 2°, snap 2°). */
+export function regionBounds(
+  bbox: MapBounds,
+  padDeg = REGION_PAD_DEG,
+  snapDeg = REGION_SNAP_DEG,
+): MapBounds {
+  let lat_min = Math.floor((bbox.lat_min - padDeg) / snapDeg) * snapDeg;
+  let lon_min = Math.floor((bbox.lon_min - padDeg) / snapDeg) * snapDeg;
+  let lat_max = Math.ceil((bbox.lat_max + padDeg) / snapDeg) * snapDeg;
+  let lon_max = Math.ceil((bbox.lon_max + padDeg) / snapDeg) * snapDeg;
+  if (lat_max <= lat_min) lat_max = lat_min + snapDeg;
+  if (lon_max <= lon_min) lon_max = lon_min + snapDeg;
+  return {
+    lat_min: Math.round(lat_min * 10000) / 10000,
+    lon_min: Math.round(lon_min * 10000) / 10000,
+    lat_max: Math.round(lat_max * 10000) / 10000,
+    lon_max: Math.round(lon_max * 10000) / 10000,
+  };
+}

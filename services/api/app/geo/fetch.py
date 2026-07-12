@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..config import GEO_CACHE_DIR
+from ..config import DATA_DIR, GEO_CACHE_DIR
 from ..schemas import BBox, Course
 from . import (
     DepthField,
@@ -23,6 +23,10 @@ from .sources import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Same EMODnet mosaic used for depth.pmtiles isobaths (chart region).
+_REGION_DEPTH_TIF = DATA_DIR / "geo" / "bathymetry" / "region_depth.tif"
+_region_depth_ds = None
 
 
 def _bbox_key(bbox: BBox) -> str:
@@ -138,16 +142,89 @@ def _covering_land_geojson(lat: float, lon: float) -> Path | None:
     return best
 
 
+def _sample_region_depth_tif(lat: float, lon: float) -> float | None:
+    """Point depth (m, positive-down) from the chart EMODnet mosaic, or None.
+
+    Returns None for out-of-bounds, land, or nodata. Use
+    `_in_region_depth_bounds` to tell those cases apart from “no mosaic file”.
+    """
+    global _region_depth_ds
+    if not _REGION_DEPTH_TIF.exists():
+        return None
+    try:
+        import rasterio  # noqa: PLC0415
+        import rasterio.windows  # noqa: PLC0415
+
+        if _region_depth_ds is None:
+            _region_depth_ds = rasterio.open(_REGION_DEPTH_TIF)
+        ds = _region_depth_ds
+        left, bottom, right, top = ds.bounds
+        if lon < left or lon > right or lat < bottom or lat > top:
+            return None
+        row, col = ds.index(lon, lat)
+        if row < 0 or col < 0 or row >= ds.height or col >= ds.width:
+            return None
+        val = float(ds.read(1, window=rasterio.windows.Window(col, row, 1, 1))[0, 0])
+        if not np.isfinite(val) or val <= 0:
+            return None  # land / nodata
+        return val
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("region_depth.tif sample failed: %s", exc)
+        return None
+
+
+def _in_region_depth_bounds(lat: float, lon: float) -> bool:
+    """True when (lat, lon) lies inside the chart bathymetry mosaic footprint."""
+    global _region_depth_ds
+    if not _REGION_DEPTH_TIF.exists():
+        return False
+    try:
+        import rasterio  # noqa: PLC0415
+
+        if _region_depth_ds is None:
+            _region_depth_ds = rasterio.open(_REGION_DEPTH_TIF)
+        left, bottom, right, top = _region_depth_ds.bounds
+        return left <= lon <= right and bottom <= lat <= top
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def depth_at_point(lat: float, lon: float) -> float | None:
-    """Water depth in metres from the smallest cached depth grid covering the point."""
+    """Water depth in metres — prefer chart mosaic, then cached depth grids."""
+    mosaic = _sample_region_depth_tif(lat, lon)
+    if mosaic is not None:
+        return mosaic
+    # Inside the chart mosaic: don't fall back to stale heuristic NPZs (often capped at 500 m).
+    if _in_region_depth_bounds(lat, lon):
+        return None
+
     npz_path = _covering_depth_npz(lat, lon)
     if npz_path is None:
         return None
     z = np.load(npz_path)
     depth = DepthField(z["lats"], z["lons"], z["depth_m"]).depth((lat, lon))
-    if depth >= 9000.0:
+    if not np.isfinite(depth) or depth <= 0 or depth >= 9000.0:
         return None
     return depth
+
+
+# Shallowest chart isobath — mosaic nodata over water means "shallower than this".
+CHART_MIN_ISOBATH_M = 2.0
+
+
+def depth_lt_at_point(
+    lat: float,
+    lon: float,
+    *,
+    on_land: bool | None,
+    depth_m: float | None = None,
+) -> float | None:
+    """When depth is unknown but the click is wet inside the chart mosaic, return <N m."""
+    if depth_m is not None or on_land is True:
+        return None
+    if not _in_region_depth_bounds(lat, lon):
+        return None
+    return CHART_MIN_ISOBATH_M
 
 
 def on_land_at_point(lat: float, lon: float) -> bool | None:

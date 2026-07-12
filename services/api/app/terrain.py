@@ -50,8 +50,12 @@ class TerrainProvider:
         if self._ds is None:
             return None
         try:
+            import rasterio  # noqa: PLC0415
+
             row, col = self._ds.index(lon, lat)
-            val = self._ds.read(1)[row, col]
+            # Windowed read — never materialise the full DEM band into RAM.
+            window = rasterio.windows.Window(col, row, 1, 1)
+            val = self._ds.read(1, window=window)[0, 0]
             return float(val)
         except Exception:  # noqa: BLE001
             return None

@@ -1,9 +1,15 @@
-"""Environment Canada GEM GDPS ~15 km (0.15°) global GRIB source."""
+"""Environment Canada GEM / GDPS ~15 km (0.15°) global GRIB source.
+
+MSC Datamart renamed the product from ``model_gem_global`` → ``model_gdps`` and
+switched filenames to the MSC_GDPS WindU/WindV convention. Current files live
+under ``/today/model_gdps/15km/{HH}/{step}/`` (dated mirror:
+``/{YYYYMMDD}/WXO-DD/model_gdps/...``).
+"""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 
@@ -20,9 +26,32 @@ from .grib_source import (
 
 logger = logging.getLogger(__name__)
 
-# CMC path layout (lat-lon 0.15). Full global files are large — keep step count tiny.
-_BASE = "https://dd.weather.gc.ca/model_gem_global/15km/grib2/lat_lon"
-_GEM_STEPS = tuple(range(0, 241, 3))
+# Hourly to 84 h, then 3-hourly to 240 h (MSC GDPS Datamart cadence).
+_GEM_STEPS = tuple(list(range(0, 85, 1)) + list(range(87, 241, 3)))
+
+
+def _gem_root(cycle: datetime, now: datetime | None = None) -> str:
+    """Prefer /today/ for the current UTC day; else the dated WXO-DD mirror."""
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    if cycle.tzinfo is None:
+        cycle = cycle.replace(tzinfo=UTC)
+    if cycle.astimezone(UTC).date() == now.astimezone(UTC).date():
+        return "https://dd.weather.gc.ca/today/model_gdps/15km"
+    day = cycle.astimezone(UTC).strftime("%Y%m%d")
+    return f"https://dd.weather.gc.ca/{day}/WXO-DD/model_gdps/15km"
+
+
+def _gem_urls(cycle: datetime, step: int) -> tuple[str, str]:
+    hh = f"{cycle.hour:02d}"
+    sss = f"{step:03d}"
+    stamp = cycle.strftime("%Y%m%d") + f"T{hh}Z"
+    root = _gem_root(cycle)
+    base = f"{root}/{hh}/{sss}"
+    u = f"{base}/{stamp}_MSC_GDPS_WindU_AGL-10m_LatLon0.15_PT{sss}H.grib2"
+    v = f"{base}/{stamp}_MSC_GDPS_WindV_AGL-10m_LatLon0.15_PT{sss}H.grib2"
+    return u, v
 
 
 class GemSource(GribSource):
@@ -31,21 +60,11 @@ class GemSource(GribSource):
 
     def fetch(self, bbox: BBox, cycle: datetime, steps: list[int]) -> WindField:
         steps = list(steps) or [0]
-        hh = f"{cycle.hour:02d}"
-        stamp = cycle.strftime("%Y%m%d%H")
 
         per_step: list[tuple[float, object, object]] = []
         lats = lons = None
         for step in steps:
-            sss = f"{step:03d}"
-            u_url = (
-                f"{_BASE}/{hh}/{sss}/"
-                f"CMC_glb_UGRD_TGL_10_latlon.15x.15_{stamp}_P{sss}.grib2"
-            )
-            v_url = (
-                f"{_BASE}/{hh}/{sss}/"
-                f"CMC_glb_VGRD_TGL_10_latlon.15x.15_{stamp}_P{sss}.grib2"
-            )
+            u_url, v_url = _gem_urls(cycle, step)
             try:
                 u_raw = http_get(u_url)
                 v_raw = http_get(v_url)

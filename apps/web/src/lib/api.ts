@@ -53,6 +53,8 @@ export interface ElevationResponse {
   lon: number;
   elevation_m: number | null;
   depth_m?: number | null;
+  /** Present when depth is only known as shallower than the chart's first isobath. */
+  depth_lt_m?: number | null;
   on_land?: boolean | null;
 }
 

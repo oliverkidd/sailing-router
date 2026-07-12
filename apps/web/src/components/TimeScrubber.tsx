@@ -45,11 +45,13 @@ export default function TimeScrubber({
   onTime,
   horizonStartUtc,
   horizonEndUtc,
+  loading = false,
 }: {
   overlayTimeUtc: string;
   onTime: (iso: string) => void;
   horizonStartUtc: string;
   horizonEndUtc: string;
+  loading?: boolean;
 }) {
   const startMs = floorHourMs(horizonStartUtc);
   const endMs = floorHourMs(horizonEndUtc);
@@ -64,7 +66,12 @@ export default function TimeScrubber({
   };
 
   return (
-    <div className="time-nav" role="group" aria-label="Forecast time">
+    <div
+      className={`time-nav${loading ? " time-nav--loading" : ""}`}
+      role="group"
+      aria-label="Forecast time"
+      aria-busy={loading || undefined}
+    >
       <button
         type="button"
         style={{ ...btnStyle, opacity: atStart ? 0.35 : 1 }}
@@ -87,8 +94,11 @@ export default function TimeScrubber({
       </button>
 
       <div className="time-nav-label">
-        <div className="time-nav-hour">{hour}</div>
-        <div className="time-nav-day">{day}</div>
+        <div className="time-nav-hour">
+          {loading && <span className="time-nav-spin" aria-hidden />}
+          {hour}
+        </div>
+        <div className="time-nav-day">{loading ? "Loading forecast…" : day}</div>
       </div>
 
       <button

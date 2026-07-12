@@ -12,7 +12,7 @@ from ..schemas import BBox
 CANON_RES_DEG = 0.0045
 # Alias kept for display-budget callers.
 TARGET_RES_DEG = CANON_RES_DEG
-MAX_DISPLAY_PTS = 96 * 96
+MAX_DISPLAY_PTS = 256 * 256
 MAX_CANON_PTS = 600 * 600
 
 REGION_PAD_DEG = 2.0

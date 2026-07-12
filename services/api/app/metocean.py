@@ -34,27 +34,27 @@ def _to_epoch(t: datetime) -> float:
 
 
 def _fill_nan_nearest(arr: np.ndarray) -> np.ndarray:
-    """Replace NaNs with nearest finite neighbour (row-major)."""
+    """Replace NaNs with spatially nearest finite neighbour (2D Euclidean).
+
+    Avoids row-major 1D fill, which painted horizontal streaks along latitude
+    rows near land / out-of-domain holes after regrid.
+    """
+    from scipy.ndimage import distance_transform_edt  # noqa: PLC0415
+
     out = np.asarray(arr, dtype=float).copy()
+    if out.ndim != 2:
+        raise ValueError(f"_fill_nan_nearest expects 2D array, got shape {out.shape}")
     if np.isfinite(out).all():
         return out
-    # Forward then backward fill along last two axes flattened.
-    flat = out.ravel()
-    nans = ~np.isfinite(flat)
+    nans = ~np.isfinite(out)
     if not nans.any():
         return out
-    idx = np.where(~nans, np.arange(flat.size), 0)
-    np.maximum.accumulate(idx, out=idx)
-    flat[nans] = flat[idx[nans]]
-    # Remaining leading NaNs: fill from first finite.
-    nans = ~np.isfinite(flat)
-    if nans.any():
-        first = next((i for i, v in enumerate(flat) if np.isfinite(v)), None)
-        if first is not None:
-            flat[nans] = flat[first]
-        else:
-            flat[nans] = 0.0
-    return flat.reshape(out.shape)
+    if nans.all():
+        out[:] = 0.0
+        return out
+    # For each NaN, copy the value at the nearest finite pixel.
+    indices = distance_transform_edt(nans, return_distances=False, return_indices=True)
+    return out[tuple(indices)]
 
 
 @dataclass
@@ -83,8 +83,9 @@ class WindField:
         times = np.asarray(times_epoch, dtype=float).reshape(-1)
         la = np.asarray(lats, dtype=float).reshape(-1)
         lo = np.asarray(lons, dtype=float).reshape(-1)
-        u = np.asarray(u10, dtype=float)
-        v = np.asarray(v10, dtype=float)
+        # float32 matches on-disk Zarr and halves RAM vs float64 grids.
+        u = np.asarray(u10, dtype=np.float32)
+        v = np.asarray(v10, dtype=np.float32)
 
         # Sort time ascending.
         t_order = np.argsort(times)
@@ -154,6 +155,13 @@ class WindField:
         for f in fields:
             if f.model_id != model_id:
                 raise ValueError("concat_time: model_id mismatch")
+            # Size check first — allclose on unequal lengths raises a broadcast
+            # ValueError that looks like a GRIB parse failure upstream.
+            if f.lats.size != lats.size or f.lons.size != lons.size:
+                raise ValueError(
+                    f"concat_time: spatial grid mismatch "
+                    f"({f.lats.size}x{f.lons.size} vs {lats.size}x{lons.size})"
+                )
             if not np.allclose(f.lats, lats) or not np.allclose(f.lons, lons):
                 raise ValueError("concat_time: spatial grid mismatch")
             for i, te in enumerate(f.times):
@@ -198,7 +206,7 @@ class WindField:
         la_mesh, lo_mesh = np.meshgrid(qla, qlo, indexing="ij")
         pts = np.column_stack([la_mesh.ravel(), lo_mesh.ravel()])
         shape = (lats_t.size, lons_t.size)
-        u_out = np.empty((self.n_times, *shape), dtype=float)
+        u_out = np.empty((self.n_times, *shape), dtype=np.float32)
         v_out = np.empty_like(u_out)
         for k in range(self.n_times):
             u_interp = RegularGridInterpolator(
