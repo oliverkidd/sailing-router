@@ -21,7 +21,10 @@ export default function ForecastPicker({
 }) {
   const items =
     routes.length > 0
-      ? routes.map((r) => ({ id: r.model_id, label: r.model_id }))
+      ? routes.map((r) => {
+          const m = models.find((x) => x.id === r.model_id);
+          return { id: r.model_id, label: m?.label ?? r.model_id };
+        })
       : Array.from(selectedModels).map((id) => {
           const m = models.find((x) => x.id === id);
           return { id, label: m?.label ?? id };

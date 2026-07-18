@@ -104,18 +104,29 @@ class DepthField:
     depth_m: np.ndarray
 
     def depth(self, pos: LatLon) -> float:
+        """Conservative depth (m, positive-down) at pos.
+
+        Uses the minimum of the surrounding 2×2 cells so a narrow shoal between
+        deep samples is not averaged away. Non-finite / missing → 0 (blocks).
+        """
         lat, lon = pos
-        if lat < self.lats[0] or lat > self.lats[-1] or lon < self.lons[0] or lon > self.lons[-1]:
-            return 9999.0
+        if (
+            lat < self.lats[0]
+            or lat > self.lats[-1]
+            or lon < self.lons[0]
+            or lon > self.lons[-1]
+        ):
+            return 0.0
         i = int(np.clip(np.searchsorted(self.lats, lat) - 1, 0, self.lats.size - 2))
         j = int(np.clip(np.searchsorted(self.lons, lon) - 1, 0, self.lons.size - 2))
-        la0, la1 = self.lats[i], self.lats[i + 1]
-        lo0, lo1 = self.lons[j], self.lons[j + 1]
-        fy = 0.0 if la1 == la0 else (lat - la0) / (la1 - la0)
-        fx = 0.0 if lo1 == lo0 else (lon - lo0) / (lo1 - lo0)
-        d0 = self.depth_m[i, j] * (1 - fx) + self.depth_m[i, j + 1] * fx
-        d1 = self.depth_m[i + 1, j] * (1 - fx) + self.depth_m[i + 1, j + 1] * fx
-        return float(d0 * (1 - fy) + d1 * fy)
+        cells = [
+            self.depth_m[i, j],
+            self.depth_m[i, j + 1],
+            self.depth_m[i + 1, j],
+            self.depth_m[i + 1, j + 1],
+        ]
+        vals = [0.0 if not np.isfinite(v) or v < 0 else float(v) for v in cells]
+        return min(vals)
 
     def too_shallow(self, pos: LatLon, min_depth_m: float) -> bool:
         return self.depth(pos) < min_depth_m
@@ -127,6 +138,9 @@ class GeoContext:
     depth: DepthField | None = None
     exclusions: list[Polygon] = field(default_factory=list)
     min_depth_m: float = 3.0
+    depth_safety_margin_m: float = 1.0
+    # ~90 m — enough for chart obstacles; 0.01 nm (~19 m) was ~5× more samples.
+    segment_sample_nm: float = 0.05
 
     @classmethod
     def build(
@@ -135,6 +149,7 @@ class GeoContext:
         depth: DepthField | None,
         exclusion_rings: list[list[LatLon]],
         min_depth_m: float,
+        depth_safety_margin_m: float = 1.0,
     ) -> GeoContext:
         polys = [Polygon([(lon, lat) for lat, lon in ring]) for ring in exclusion_rings if len(ring) >= 3]
         return cls(
@@ -142,6 +157,7 @@ class GeoContext:
             depth=depth,
             exclusions=polys,
             min_depth_m=min_depth_m,
+            depth_safety_margin_m=depth_safety_margin_m,
         )
 
     def in_exclusion(self, pos: LatLon) -> bool:
@@ -151,7 +167,7 @@ class GeoContext:
     def too_shallow(self, pos: LatLon) -> bool:
         if self.depth is None:
             return False
-        return self.depth.too_shallow(pos, self.min_depth_m)
+        return self.depth.too_shallow(pos, self.min_depth_m + self.depth_safety_margin_m)
 
     def blocked_point(self, pos: LatLon) -> bool:
         return self.land.on_land(pos) or self.too_shallow(pos) or self.in_exclusion(pos)
@@ -160,7 +176,7 @@ class GeoContext:
         if self.land.segment_crosses_land(a, b):
             return True
         dist = distance_nm(a, b)
-        steps = max(2, int(dist / 0.05))
+        steps = max(2, int(dist / self.segment_sample_nm))
         for i in range(steps + 1):
             f = i / steps
             lat = a[0] + f * (b[0] - a[0])

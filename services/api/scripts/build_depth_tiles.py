@@ -26,7 +26,12 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from region import DEPTH_LEVELS_M, EMODNET_RES_DEG, REGION_BBOX  # noqa: E402
+from region import (  # noqa: E402
+    DEPTH_LEVELS_M,
+    EMODNET_RES_DEG,
+    REGION_BBOX,
+    archive_output,
+)
 
 BATHY_DIR = ROOT / "data" / "geo" / "bathymetry"
 REGION_TIF = BATHY_DIR / "region_depth.tif"
@@ -67,6 +72,38 @@ _SHALLOW_BANDS = (
     (50.0, 1.0e6, "50+"),
 )
 _BAND_CHUNK_DEG = 2.5
+
+# Per-isobath minzoom: deep contours appear when zoomed out (coarse offshore),
+# shallow/harbour contours only when zoomed in — keeps low-zoom tiles light
+# without changing the zoomed-in look.
+_MAXZOOM = 14
+
+
+def _isobath_minzoom(depth_m: float) -> int:
+    d = abs(float(depth_m))
+    if d <= 1.0:
+        return 12
+    if d <= 2.0:
+        return 11
+    if d <= 5.0:
+        return 9
+    if d <= 10.0:
+        return 7
+    if d <= 20.0:
+        return 6
+    return 4
+
+
+# Per-band minzoom for the fill wash: keep coarse deep bands at low zoom so the
+# sea still reads blue when zoomed out; gate the fine shallow bands to high zoom.
+_FILL_BAND_MINZOOM = {
+    "0-2": 9,
+    "2-4": 9,
+    "4-5": 9,
+    "5-10": 7,
+    "10-50": 5,
+    "50+": 4,
+}
 
 OSM_SHP_CANDIDATES = [
     ROOT / "data" / "geo" / "osm" / "land-polygons-split-4326" / "land_polygons.shp",
@@ -441,6 +478,10 @@ def _clean_contour_feature(feat: dict) -> list[dict]:
             out.append(
                 {
                     "type": "Feature",
+                    "tippecanoe": {
+                        "minzoom": _isobath_minzoom(depth_f),
+                        "maxzoom": _MAXZOOM,
+                    },
                     "properties": {"depth": depth_v},
                     "geometry": mapping(piece),
                 }
@@ -557,6 +598,10 @@ def _write_fill_geojsonl(lines_geojsonl: Path, soft: Path, out_geojsonl: Path) -
                         lo, hi, name = classified
                         feat = {
                             "type": "Feature",
+                            "tippecanoe": {
+                                "minzoom": _FILL_BAND_MINZOOM.get(name, 4),
+                                "maxzoom": _MAXZOOM,
+                            },
                             "properties": {
                                 "band": name,
                                 "depth_lo": lo,
@@ -685,8 +730,9 @@ def main() -> int:
         return 1
     print(f"[depth] wrote {n_fill} fill features → {fill_geojsonl}")
 
-    if OUT.exists():
-        OUT.unlink()
+    archived = archive_output(OUT)
+    if archived:
+        print(f"[depth] archived previous tiles → {archived}")
 
     cmd = [
         "tippecanoe",
@@ -695,9 +741,11 @@ def main() -> int:
         "-Z4",
         "-z14",
         "--force",
-        "--no-tile-size-limit",
-        "--no-feature-limit",
-        "--no-line-simplification",
+        # Respect the ~500 KB tile limit: simplify low-zoom geometry and drop
+        # the densest contours so zoomed-out tiles stay light. Per-feature
+        # minzoom (set above) already thins deep vs shallow isobaths by zoom.
+        "--simplification=10",
+        "--drop-densest-as-needed",
         "-L",
         f"depth:{lines_geojsonl}",
         "-L",

@@ -7,6 +7,8 @@ import { api } from "@/lib/api";
 import {
   boundsFromMap,
   courseIsReady,
+  isPointSet,
+  seekTimeAlongRoute,
   type MapBounds,
 } from "@/lib/mapOverlays";
 import { sampleGrid, sliceSeries, type MeteoGrid, type WindSeries } from "@/lib/meteoGrid";
@@ -18,9 +20,36 @@ import { formatPointPopup, type PointInspect } from "@/lib/mapPopup";
 import { REGION_CENTER, REGION_MAX_BOUNDS } from "@/lib/region";
 import { viewportMaxSpanMiles } from "@/lib/windTiles";
 import type { Course, ModelRoute } from "@/lib/types";
+import type { EditMode } from "@/components/CourseEditor";
+import {
+  DEM_COVERAGE_LAYER_ID,
+  DEM_COVERAGE_SOURCE_ID,
+  TERRAIN_EXAGGERATION,
+  TERRAIN_HILLSHADE_ID,
+  TERRAIN_MESH_MIN_ZOOM,
+  TERRAIN_SOURCE_ID,
+  WIND_HIDE_PITCH_DEG,
+  fetchTerrainTileMeta,
+  footprintsToFeatureCollection,
+  viewportIntersectsAnyDem,
+  type DemBounds,
+} from "@/lib/terrainMap";
 
 const DEFAULT_ZOOM = 5;
 const MIN_ZOOM = 4;
+
+function courseCursorCss(mode: EditMode): string {
+  if (mode === "none") return "";
+  const fill =
+    mode === "start" ? "#4ade80" : mode === "finish" ? "#fb7185" : "#1e3a5f";
+  const label = mode === "start" ? "S" : mode === "finish" ? "F" : "+";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9" fill="${fill}" stroke="#0b1220" stroke-width="2"/>
+    <text x="12" y="16" text-anchor="middle" font-size="11" font-weight="700" font-family="sans-serif" fill="${mode === "mark" ? "#ffffff" : "#0b1220"}">${label}</text>
+  </svg>`;
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  return `url("${url}") 12 12, crosshair`;
+}
 
 let pmtilesRegistered = false;
 function ensurePmtilesProtocol() {
@@ -32,7 +61,11 @@ function ensurePmtilesProtocol() {
 
 /** Dark nautical chart — land + depth isobaths from local PMTiles (no runtime fetch). */
 /** Bump when coastline.pmtiles / depth.pmtiles are rebuilt so browsers skip stale Range caches. */
-const CHART_TILE_VERSION = "20260712full";
+const CHART_TILE_VERSION = "20260718full";
+
+/** Land fill (grey) + a darker stroke for a clean coastline outline. */
+const LAND_FILL_COLOR = "#c8c8c8";
+const COASTLINE_COLOR = "#7a7a7a";
 
 /** Uniform isobath stroke — slate, low opacity. */
 const DEPTH_LINE_COLOR = "#475569";
@@ -49,7 +82,7 @@ const DEPTH_LINE_PAINT: maplibregl.LineLayerSpecification["paint"] = {
     14,
     1.0,
   ],
-  "line-opacity": 0.32,
+  "line-opacity": 0.17,
 };
 
 /**
@@ -75,7 +108,7 @@ const DEPTH_BAND_PAINT: maplibregl.FillLayerSpecification["paint"] = {
     "#ffffff",
     "#ffffff",
   ],
-  "fill-opacity": 1,
+  "fill-opacity": 0.7,
 };
 
 const DEPTH_LABEL_LAYOUT: maplibregl.SymbolLayerSpecification["layout"] = {
@@ -144,7 +177,7 @@ function buildChartStyle(origin: string): maplibregl.StyleSpecification {
         source: "coastline",
         "source-layer": "land",
         paint: {
-          "fill-color": "#dddddd",
+          "fill-color": LAND_FILL_COLOR,
           "fill-opacity": 1,
         },
       },
@@ -157,6 +190,34 @@ function buildChartStyle(origin: string): maplibregl.StyleSpecification {
         paint: {
           "fill-color": DEPTH_SHALLOW_FILL,
           "fill-opacity": 1,
+        },
+      },
+      // Clean land outline (darker than fill); split-grid seams removed at build time.
+      {
+        id: "coastline",
+        type: "line",
+        source: "coastline",
+        "source-layer": "coastline",
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": COASTLINE_COLOR,
+          "line-opacity": 0.85,
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            4,
+            0.3,
+            7,
+            0.5,
+            10,
+            0.8,
+            14,
+            1.4,
+          ],
         },
       },
       // Windy-like subtle roads / rivers on land (under labels).
@@ -376,6 +437,22 @@ function twdFromUv(u: number, v: number): number {
   return ((Math.atan2(-u, -v) * 180) / Math.PI + 360) % 360;
 }
 
+function formatCoursePointTooltip(
+  kind: string,
+  label: string,
+  lat: number,
+  lon: number,
+): string {
+  const name =
+    kind === "start" ? "Start" : kind === "finish" ? "Finish" : `Mark ${label}`;
+  const ns = lat >= 0 ? "N" : "S";
+  const ew = lon >= 0 ? "E" : "W";
+  return `<div class="course-point-tooltip">
+    <strong>${name}</strong>
+    <div class="course-point-tooltip-coords">${Math.abs(lat).toFixed(4)}°${ns} ${Math.abs(lon).toFixed(4)}°${ew}</div>
+  </div>`;
+}
+
 export default function MapView({
   routes = [],
   course,
@@ -385,8 +462,12 @@ export default function MapView({
   playbackPosition = null,
   playbackHeading = null,
   fitRouteKey,
+  editMode = "none",
+  showDepth = true,
   onMapClick,
   onRouteSelect,
+  onRouteSeek,
+  onCoursePointMove,
   onOverlayError,
   onViewportChange,
 }: {
@@ -399,30 +480,51 @@ export default function MapView({
   playbackPosition?: [number, number] | null;
   playbackHeading?: number | null;
   fitRouteKey?: string;
+  editMode?: EditMode;
+  showDepth?: boolean;
   onMapClick?: (lat: number, lon: number) => void;
   onRouteSelect?: (modelId: string) => void;
+  onRouteSeek?: (modelId: string, tUtc: string) => void;
+  onCoursePointMove?: (
+    kind: "start" | "finish" | "mark",
+    index: number | null,
+    lat: number,
+    lon: number,
+  ) => void;
   onOverlayError?: (message: string | null) => void;
-  onViewportChange?: (bounds: MapBounds, maxSpanMiles: number) => void;
+  onViewportChange?: (bounds: MapBounds, maxSpanMiles: number, zoom: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const loadedRef = useRef(false);
   const syncLocalRef = useRef<(() => void) | null>(null);
   const onRouteSelectRef = useRef(onRouteSelect);
+  const onRouteSeekRef = useRef(onRouteSeek);
   const onMapClickRef = useRef(onMapClick);
+  const onCoursePointMoveRef = useRef(onCoursePointMove);
   const onOverlayErrorRef = useRef(onOverlayError);
   const onViewportChangeRef = useRef(onViewportChange);
+  const editModeRef = useRef(editMode);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const hoverPopupRef = useRef<maplibregl.Popup | null>(null);
+  const dragPointRef = useRef<{
+    kind: "start" | "finish" | "mark";
+    index: number | null;
+  } | null>(null);
 
   const windHeatRef = useRef<WindHeatmapLayer | null>(null);
   const windArrowsRef = useRef<WindArrowLayer | null>(null);
   const windGridRef = useRef<MeteoGrid | null>(null);
   const windDataRef = useRef(false);
+  const demFootprintsRef = useRef<DemBounds[]>([]);
+  const terrainTilesReadyRef = useRef(false);
+  const terrainTileBoundsRef = useRef<DemBounds | null>(null);
 
   const propsRef = useRef({
     routes,
     course,
     showWind,
+    showDepth,
     windTimeUtc,
     windSeries,
     playbackPosition,
@@ -433,15 +535,19 @@ export default function MapView({
     routes,
     course,
     showWind,
+    showDepth,
     windTimeUtc,
     windSeries,
     playbackPosition,
     playbackHeading,
   };
   onRouteSelectRef.current = onRouteSelect;
+  onRouteSeekRef.current = onRouteSeek;
   onMapClickRef.current = onMapClick;
+  onCoursePointMoveRef.current = onCoursePointMove;
   onOverlayErrorRef.current = onOverlayError;
   onViewportChangeRef.current = onViewportChange;
+  editModeRef.current = editMode;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -454,10 +560,20 @@ export default function MapView({
       zoom: DEFAULT_ZOOM,
       minZoom: MIN_ZOOM,
       maxZoom: 18,
+      maxPitch: 60,
       maxBounds: REGION_MAX_BOUNDS,
       attributionControl: { compact: true },
     });
     mapRef.current = map;
+    // Arrow keys are used by TimeScrubber for route stepping — don't pan/zoom.
+    map.keyboard.disable();
+    // Pitch for DEM / cliffs; keep the chart north-up (bearing always 0).
+    map.touchZoomRotate.disableRotation();
+    map.touchPitch.enable();
+    // Right-click / Ctrl-drag still pitches via dragRotate; we zero bearing.
+    map.on("rotate", () => {
+      if (map.getBearing() !== 0) map.setBearing(0);
+    });
 
     map.on("error", (e) => {
       const msg = e.error?.message ?? String(e.error ?? "Map error");
@@ -486,6 +602,99 @@ export default function MapView({
         console.warn("[map] wind arrow icon failed to load", e);
       }
       windArrows.attach(map);
+
+      // DEM footprint outlines (all open mosaics) + optional Terrain-RGB / hillshade.
+      map.addSource(DEM_COVERAGE_SOURCE_ID, { type: "geojson", data: empty });
+      map.addLayer({
+        id: DEM_COVERAGE_LAYER_ID,
+        type: "line",
+        source: DEM_COVERAGE_SOURCE_ID,
+        paint: {
+          "line-color": "#b45309",
+          "line-width": 1.5,
+          "line-dasharray": [2, 2],
+          "line-opacity": 0.55,
+        },
+      });
+
+      try {
+        const cov = await api.demCoverage();
+        demFootprintsRef.current = cov.footprints;
+        (map.getSource(DEM_COVERAGE_SOURCE_ID) as maplibregl.GeoJSONSource).setData(
+          footprintsToFeatureCollection(cov.footprints),
+        );
+      } catch {
+        /* API offline — try static build artifact */
+        try {
+          const res = await fetch(`${window.location.origin}/geo/dem_coverage.geojson`);
+          if (res.ok) {
+            const fc = (await res.json()) as GeoJSON.FeatureCollection;
+            (map.getSource(DEM_COVERAGE_SOURCE_ID) as maplibregl.GeoJSONSource).setData(fc);
+            demFootprintsRef.current = fc.features
+              .map((f) => {
+                const g = f.geometry;
+                if (g.type !== "Polygon") return null;
+                const ring = g.coordinates[0];
+                const lons = ring.map((c) => c[0]);
+                const lats = ring.map((c) => c[1]);
+                return {
+                  lon_min: Math.min(...lons),
+                  lat_min: Math.min(...lats),
+                  lon_max: Math.max(...lons),
+                  lat_max: Math.max(...lats),
+                  name: String(f.properties?.name ?? "dem"),
+                };
+              })
+              .filter((x): x is DemBounds & { name: string } => x != null);
+          }
+        } catch {
+          /* no DEM coverage overlay */
+        }
+      }
+
+      const terrainMeta = await fetchTerrainTileMeta(window.location.origin);
+      if (terrainMeta) {
+        terrainTilesReadyRef.current = true;
+        terrainTileBoundsRef.current = {
+          lon_min: terrainMeta.bounds[0],
+          lat_min: terrainMeta.bounds[1],
+          lon_max: terrainMeta.bounds[2],
+          lat_max: terrainMeta.bounds[3],
+        };
+        const tilesUrl = `${window.location.origin}/geo/terrain/{z}/{x}/{y}.png`;
+        if (!map.getSource(TERRAIN_SOURCE_ID)) {
+          map.addSource(TERRAIN_SOURCE_ID, {
+            type: "raster-dem",
+            tiles: [tilesUrl],
+            tileSize: 256,
+            minzoom: terrainMeta.minzoom,
+            maxzoom: terrainMeta.maxzoom,
+            encoding: "mapbox",
+            bounds: terrainMeta.bounds,
+          });
+        }
+        if (!map.getLayer(TERRAIN_HILLSHADE_ID)) {
+          // Under land labels / wind — after land-fill so cliffs read on land.
+          const beforeId = map.getLayer("coastline") ? "coastline" : undefined;
+          map.addLayer(
+            {
+              id: TERRAIN_HILLSHADE_ID,
+              type: "hillshade",
+              source: TERRAIN_SOURCE_ID,
+              minzoom: terrainMeta.minzoom,
+              paint: {
+                "hillshade-exaggeration": 0.45,
+                "hillshade-shadow-color": "#1e293b",
+                "hillshade-highlight-color": "#f8fafc",
+                "hillshade-accent-color": "#64748b",
+                "hillshade-illumination-direction": 315,
+                "hillshade-illumination-anchor": "viewport",
+              },
+            },
+            beforeId,
+          );
+        }
+      }
 
       map.addSource("routes", { type: "geojson", data: routesToFeatureCollection([]) });
       map.addLayer({
@@ -518,10 +727,40 @@ export default function MapView({
         source: "course",
         type: "circle",
         paint: {
-          "circle-radius": 6,
-          "circle-color": ["match", ["get", "kind"], "start", "#4ade80", "finish", "#fb7185", "#facc15"],
+          "circle-radius": 10,
+          "circle-color": [
+            "match",
+            ["get", "kind"],
+            "start",
+            "#4ade80",
+            "finish",
+            "#fb7185",
+            "#1e3a5f",
+          ],
           "circle-stroke-color": "#0b1220",
           "circle-stroke-width": 2,
+        },
+      });
+      map.addLayer({
+        id: "course-labels",
+        source: "course",
+        type: "symbol",
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 11,
+          "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+          "text-anchor": "center",
+        },
+        paint: {
+          "text-color": [
+            "match",
+            ["get", "kind"],
+            "mark",
+            "#ffffff",
+            "#0b1220",
+          ],
         },
       });
 
@@ -552,13 +791,113 @@ export default function MapView({
       map.on("click", "routes", (e) => {
         const f = e.features?.[0];
         const mid = f?.properties?.model_id;
-        if (mid && onRouteSelectRef.current) onRouteSelectRef.current(String(mid));
+        if (!mid) return;
+        const modelId = String(mid);
+        onRouteSelectRef.current?.(modelId);
+        const seek = onRouteSeekRef.current;
+        if (seek && e.lngLat) {
+          const route = propsRef.current.routes.find((r) => r.model_id === modelId);
+          if (route?.legs?.length) {
+            const tUtc = seekTimeAlongRoute(route.legs, e.lngLat.lat, e.lngLat.lng);
+            if (tUtc) seek(modelId, tUtc);
+          }
+        }
       });
       map.on("mouseenter", "routes", () => {
         map.getCanvas().style.cursor = "pointer";
       });
       map.on("mouseleave", "routes", () => {
-        map.getCanvas().style.cursor = "";
+        map.getCanvas().style.cursor = courseCursorCss(editModeRef.current);
+      });
+
+      const showCoursePointTooltip = (
+        e: maplibregl.MapLayerMouseEvent,
+      ) => {
+        if (dragPointRef.current != null) return;
+        if (editModeRef.current !== "none") {
+          map.getCanvas().style.cursor = courseCursorCss(editModeRef.current);
+          return;
+        }
+        map.getCanvas().style.cursor = "move";
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== "Point") return;
+        const kind = String(f.properties?.kind ?? "");
+        const label = String(f.properties?.label ?? "");
+        const [lon, lat] = f.geometry.coordinates as [number, number];
+        hoverPopupRef.current?.remove();
+        hoverPopupRef.current = new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          offset: 14,
+          className: "course-point-tooltip-wrap",
+          maxWidth: "220px",
+        })
+          .setLngLat([lon, lat])
+          .setHTML(formatCoursePointTooltip(kind, label, lat, lon))
+          .addTo(map);
+      };
+
+      const hideCoursePointTooltip = () => {
+        if (dragPointRef.current != null) return;
+        map.getCanvas().style.cursor = courseCursorCss(editModeRef.current);
+        hoverPopupRef.current?.remove();
+        hoverPopupRef.current = null;
+      };
+
+      map.on("mouseenter", "course-marks", showCoursePointTooltip);
+      map.on("mouseleave", "course-marks", hideCoursePointTooltip);
+      map.on("mouseenter", "course-labels", showCoursePointTooltip);
+      map.on("mouseleave", "course-labels", hideCoursePointTooltip);
+
+      map.on("mousedown", "course-marks", (e) => {
+        if (editModeRef.current !== "none") return;
+        const f = e.features?.[0];
+        const kind = f?.properties?.kind;
+        if (kind !== "start" && kind !== "finish" && kind !== "mark") return;
+        let index: number | null = null;
+        if (kind === "mark") {
+          index = Number(f?.properties?.index);
+          if (!Number.isFinite(index)) return;
+        }
+        e.preventDefault();
+        hoverPopupRef.current?.remove();
+        hoverPopupRef.current = null;
+        dragPointRef.current = { kind, index };
+        map.dragPan.disable();
+        map.scrollZoom.disable();
+        map.getCanvas().style.cursor = "grabbing";
+      });
+      map.on("mousedown", "course-labels", (e) => {
+        if (editModeRef.current !== "none") return;
+        const f = e.features?.[0];
+        const kind = f?.properties?.kind;
+        if (kind !== "start" && kind !== "finish" && kind !== "mark") return;
+        let index: number | null = null;
+        if (kind === "mark") {
+          index = Number(f?.properties?.index);
+          if (!Number.isFinite(index)) return;
+        }
+        e.preventDefault();
+        hoverPopupRef.current?.remove();
+        hoverPopupRef.current = null;
+        dragPointRef.current = { kind, index };
+        map.dragPan.disable();
+        map.scrollZoom.disable();
+        map.getCanvas().style.cursor = "grabbing";
+      });
+
+      map.on("mousemove", (e) => {
+        const drag = dragPointRef.current;
+        if (!drag) return;
+        onCoursePointMoveRef.current?.(drag.kind, drag.index, e.lngLat.lat, e.lngLat.lng);
+      });
+
+      map.on("mouseup", () => {
+        if (dragPointRef.current == null) return;
+        dragPointRef.current = null;
+        map.dragPan.enable();
+        map.scrollZoom.enable();
+        map.getCanvas().style.cursor = courseCursorCss(editModeRef.current);
       });
 
       // Wind under place labels under routes.
@@ -578,12 +917,20 @@ export default function MapView({
 
       emitViewport();
       syncLocalData();
+
+      const depthVis = propsRef.current.showDepth ? "visible" : "none";
+      for (const id of ["depth-fill", "depth-line", "depth-label"]) {
+        if (map.getLayer(id)) {
+          map.setLayoutProperty(id, "visibility", depthVis);
+        }
+      }
     });
 
     const debouncedViewport = debounce(() => {
       emitViewport();
+      syncTerrainAndWind();
       const grid = windGridRef.current;
-      if (grid && propsRef.current.showWind) {
+      if (grid && propsRef.current.showWind && map.getPitch() <= WIND_HIDE_PITCH_DEG) {
         windHeatRef.current?.syncViewport();
         windArrowsRef.current?.setGrid(grid, { immediate: true });
       }
@@ -591,8 +938,25 @@ export default function MapView({
 
     map.on("moveend", debouncedViewport);
     map.on("zoomend", debouncedViewport);
+    map.on("pitchend", () => {
+      syncTerrainAndWind();
+      syncLocalData();
+    });
 
     map.on("click", async (e) => {
+      if (dragPointRef.current != null) return;
+      const markHit = map.queryRenderedFeatures(e.point, { layers: ["course-marks"] });
+      if (
+        markHit.some(
+          (f) =>
+            f.properties?.kind === "mark" ||
+            f.properties?.kind === "start" ||
+            f.properties?.kind === "finish",
+        ) &&
+        editModeRef.current === "none"
+      ) {
+        return;
+      }
       const feats = map.queryRenderedFeatures(e.point, { layers: ["routes"] });
       if (feats.length > 0) return;
       if (onMapClickRef.current) {
@@ -638,7 +1002,52 @@ export default function MapView({
       if (!m) return;
       const bbox = boundsFromMap(() => m.getBounds());
       const span = viewportMaxSpanMiles(bbox);
-      onViewportChangeRef.current?.(bbox, span);
+      onViewportChangeRef.current?.(bbox, span, m.getZoom());
+    }
+
+    function syncTerrainAndWind() {
+      const m = mapRef.current;
+      if (!m || !loadedRef.current) return;
+
+      const pitched = m.getPitch() > WIND_HIDE_PITCH_DEG;
+      const zoom = m.getZoom();
+      const b = m.getBounds();
+      const tileBounds = terrainTileBoundsRef.current;
+      const overTerrainTiles =
+        tileBounds != null &&
+        viewportIntersectsAnyDem(
+          b.getWest(),
+          b.getSouth(),
+          b.getEast(),
+          b.getNorth(),
+          [tileBounds],
+        );
+
+      if (terrainTilesReadyRef.current && m.getSource(TERRAIN_SOURCE_ID)) {
+        const wantMesh = zoom >= TERRAIN_MESH_MIN_ZOOM && overTerrainTiles;
+        const hasTerrain = m.getTerrain() != null;
+        if (wantMesh && !hasTerrain) {
+          m.setTerrain({
+            source: TERRAIN_SOURCE_ID,
+            exaggeration: TERRAIN_EXAGGERATION,
+          });
+        } else if (!wantMesh && hasTerrain) {
+          m.setTerrain(null);
+          if (m.getPitch() > 0) m.easeTo({ pitch: 0, duration: 300 });
+        }
+        if (m.getLayer(TERRAIN_HILLSHADE_ID)) {
+          m.setLayoutProperty(
+            TERRAIN_HILLSHADE_ID,
+            "visibility",
+            overTerrainTiles ? "visible" : "none",
+          );
+        }
+      }
+
+      // Canvas wind is screen-sampled into a geographic quad — wrong when pitched.
+      const windOn = propsRef.current.showWind && windDataRef.current && !pitched;
+      windHeatRef.current?.setVisible(m, windOn);
+      windArrowsRef.current?.setVisible(m, windOn);
     }
 
     function syncLocalData() {
@@ -654,24 +1063,28 @@ export default function MapView({
       );
 
       const courseFeatures: GeoJSON.Feature[] = [];
-      if (p.course && courseIsReady(p.course)) {
-        courseFeatures.push({
-          type: "Feature",
-          properties: { kind: "start" },
-          geometry: { type: "Point", coordinates: [p.course.start[1], p.course.start[0]] },
-        });
+      if (p.course) {
+        if (isPointSet(p.course.start)) {
+          courseFeatures.push({
+            type: "Feature",
+            properties: { kind: "start", label: "S" },
+            geometry: { type: "Point", coordinates: [p.course.start[1], p.course.start[0]] },
+          });
+        }
         p.course.marks.forEach((mk, i) =>
           courseFeatures.push({
             type: "Feature",
-            properties: { kind: "mark", label: mk.name ?? `M${i + 1}` },
+            properties: { kind: "mark", label: String(i + 1), index: i },
             geometry: { type: "Point", coordinates: [mk.position[1], mk.position[0]] },
           }),
         );
-        courseFeatures.push({
-          type: "Feature",
-          properties: { kind: "finish" },
-          geometry: { type: "Point", coordinates: [p.course.finish[1], p.course.finish[0]] },
-        });
+        if (isPointSet(p.course.finish)) {
+          courseFeatures.push({
+            type: "Feature",
+            properties: { kind: "finish", label: "F" },
+            geometry: { type: "Point", coordinates: [p.course.finish[1], p.course.finish[0]] },
+          });
+        }
       }
       (m.getSource("course") as maplibregl.GeoJSONSource | undefined)?.setData({
         type: "FeatureCollection",
@@ -682,13 +1095,25 @@ export default function MapView({
         boatFeature(p.playbackPosition, p.playbackHeading),
       );
 
-      windHeatRef.current?.setVisible(m, p.showWind && windDataRef.current);
-      windArrowsRef.current?.setVisible(m, p.showWind && windDataRef.current);
+      syncTerrainAndWind();
     }
 
     syncLocalRef.current = () => syncLocalData();
 
+    const endPointDragWindow = () => {
+      if (dragPointRef.current == null) return;
+      dragPointRef.current = null;
+      const m = mapRef.current;
+      if (!m) return;
+      m.dragPan.enable();
+      m.scrollZoom.enable();
+      m.getCanvas().style.cursor = courseCursorCss(editModeRef.current);
+    };
+    window.addEventListener("mouseup", endPointDragWindow);
+
     return () => {
+      window.removeEventListener("mouseup", endPointDragWindow);
+      hoverPopupRef.current?.remove();
       popupRef.current?.remove();
       windHeatRef.current?.destroy(map);
       windArrowsRef.current?.destroy(map);
@@ -701,6 +1126,16 @@ export default function MapView({
   useEffect(() => {
     syncLocalRef.current?.();
   }, [routes, course, playbackPosition, playbackHeading, showWind]);
+
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !loadedRef.current) return;
+    const cursor = courseCursorCss(editMode);
+    m.getCanvas().style.cursor = cursor;
+    return () => {
+      if (mapRef.current) mapRef.current.getCanvas().style.cursor = "";
+    };
+  }, [editMode]);
 
   // Browse + playback: slice the series locally — no network.
   useEffect(() => {
@@ -735,15 +1170,28 @@ export default function MapView({
 
   useEffect(() => {
     const m = mapRef.current;
-    if (!m || !loadedRef.current || !course || !fitRouteKey || !courseIsReady(course)) return;
+    if (!m || !loadedRef.current || !fitRouteKey) return;
+    const c = propsRef.current.course;
+    if (!c || !courseIsReady(c)) return;
     m.fitBounds(
       [
-        [Math.min(course.start[1], course.finish[1]) - 0.2, Math.min(course.start[0], course.finish[0]) - 0.2],
-        [Math.max(course.start[1], course.finish[1]) + 0.2, Math.max(course.start[0], course.finish[0]) + 0.2],
+        [Math.min(c.start[1], c.finish[1]) - 0.2, Math.min(c.start[0], c.finish[0]) - 0.2],
+        [Math.max(c.start[1], c.finish[1]) + 0.2, Math.max(c.start[0], c.finish[0]) + 0.2],
       ],
       { padding: 48, duration: 800 },
     );
-  }, [fitRouteKey, course]);
+  }, [fitRouteKey]);
+
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !loadedRef.current) return;
+    const visibility = showDepth ? "visible" : "none";
+    for (const id of ["depth-fill", "depth-line", "depth-label"]) {
+      if (m.getLayer(id)) {
+        m.setLayoutProperty(id, "visibility", visibility);
+      }
+    }
+  }, [showDepth]);
 
   return <div id="map" ref={containerRef} />;
 }

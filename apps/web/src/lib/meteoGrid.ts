@@ -36,6 +36,11 @@ export interface WindSeries {
   bbox?: MapBounds;
   error?: string;
   message?: string;
+  zoom_tier?: string;
+  target_res_deg?: number;
+  terrain_applied?: boolean;
+  terrain_library?: "windninja" | "identity" | "none" | string;
+  terrain_library_version?: string;
 }
 
 export interface WindSeriesResult {
@@ -60,24 +65,75 @@ export async function fetchWindArea(
   startUtc: string,
   endUtc: string,
   signal?: AbortSignal,
+  zoom?: number,
+  terrain?: boolean,
 ): Promise<WindSeriesResult> {
-  const q = bboxParams(bbox, {
+  const extra: Record<string, string> = {
     model_id: modelId,
     start_utc: startUtc,
     end_utc: endUtc,
-  });
-  const res = await fetch(`${API_BASE}/wind/area?${q}`, { signal });
-  if (!res.ok) {
-    return { series: null, error: `Wind area API error (${res.status})` };
+  };
+  if (zoom != null && Number.isFinite(zoom)) {
+    extra.zoom = String(zoom);
   }
-  const data = (await res.json()) as WindSeries;
-  if (data.error) {
-    return { series: null, error: data.message || "Wind unavailable" };
+  if (terrain === false) {
+    extra.terrain = "false";
   }
-  if (!data.times?.length) {
-    return { series: null, error: "Wind series empty" };
+  const q = bboxParams(bbox, extra);
+  const t0 = performance.now();
+  try {
+    const res = await fetch(`${API_BASE}/wind/area?${q}`, { signal });
+    const elapsedMs = Math.round(performance.now() - t0);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.warn("[forecast] /wind/area HTTP error", {
+        modelId,
+        status: res.status,
+        elapsedMs,
+        startUtc,
+        endUtc,
+        body: body.slice(0, 200),
+      });
+      return { series: null, error: `Wind area API error (${res.status})` };
+    }
+    const data = (await res.json()) as WindSeries;
+    if (data.error) {
+      console.warn("[forecast] /wind/area unavailable", {
+        modelId,
+        error: data.error,
+        message: data.message,
+        elapsedMs,
+      });
+      return { series: null, error: data.message || "Wind unavailable" };
+    }
+    if (!data.times?.length) {
+      console.warn("[forecast] /wind/area empty series", { modelId, elapsedMs });
+      return { series: null, error: "Wind series empty" };
+    }
+    if (process.env.NODE_ENV === "development") {
+      console.info("[forecast] /wind/area OK", {
+        modelId,
+        hours: data.times.length,
+        elapsedMs,
+        terrain: data.terrain_applied,
+        tier: data.zoom_tier,
+      });
+    }
+    return { series: data };
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      return { series: null, error: "aborted" };
+    }
+    console.warn("[forecast] /wind/area fetch failed", {
+      modelId,
+      elapsedMs: Math.round(performance.now() - t0),
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return {
+      series: null,
+      error: e instanceof Error ? e.message : "Wind fetch failed",
+    };
   }
-  return { series: data };
 }
 
 /** @deprecated Use fetchWindArea */

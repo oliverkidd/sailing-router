@@ -1,4 +1,4 @@
-.PHONY: help dev dev-api dev-web install install-api install-web lint fetch-fixtures fetch-geo fetch-geo-sample tiles tiles-sample clean-tile-build docker-build
+.PHONY: help dev dev-api dev-web install install-api install-web lint fetch-fixtures fetch-geo fetch-geo-sample tiles tiles-sample wind-terrain wind-terrain-sample terrain-rgb build-data clean-tile-build docker-build
 
 help:
 	@echo "Sailing Weather Router - make targets"
@@ -6,12 +6,16 @@ help:
 	@echo "  make dev            Run API (uvicorn) + web (next dev) together"
 	@echo "  make dev-api        Run FastAPI backend only"
 	@echo "  make dev-web        Run Next.js frontend only"
+	@echo "  make build-data     Smart offline asset build (skips existing; npm run build-data)"
 	@echo "  make lint           Ruff lint backend"
 	@echo "  make fetch-fixtures Prefetch GRIB wind + geo for offline demo"
 	@echo "  make fetch-geo-sample  Solent/IoW coastal Overpass (style preview)"
 	@echo "  make tiles-sample   Build coastline.pmtiles for Solent sample only"
 	@echo "  make fetch-geo      Full-region OSM land + coastal Overpass"
 	@echo "  make tiles          Full-region coastline + EMODnet depth PMTiles"
+	@echo "  make wind-terrain-sample  Identity/WindNinja terrain library (Solent)"
+	@echo "  make wind-terrain   Region-wide terrain-response library bake"
+	@echo "  make terrain-rgb    Cyclades MapLibre Terrain-RGB XYZ tiles"
 	@echo "  make clean-tile-build  Delete build intermediates (keeps public/geo/*.pmtiles)"
 	@echo "  make docker-build   Build the pinned eccodes + WindNinja image"
 
@@ -32,6 +36,9 @@ dev-api:
 
 dev-web:
 	cd apps/web && npm run dev
+
+build-data:
+	npm run build-data
 
 lint:
 	cd services/api && . .venv/bin/activate && ruff check app
@@ -62,11 +69,27 @@ tiles: fetch-geo
 	cd services/api && . .venv/bin/activate && python scripts/build_coastline_tiles.py
 	cd services/api && . .venv/bin/activate && python scripts/build_depth_tiles.py
 
+# Terrain-response library for 200 m WindNinja downscaling.
+# Default is --identity (no WindNinja install). Pass WINDNINJA_BIN=... for a real bake.
+wind-terrain-sample:
+	cd services/api && . .venv/bin/activate && \
+		python scripts/build_wind_terrain.py --sample --identity
+
+wind-terrain:
+	cd services/api && . .venv/bin/activate && \
+		python scripts/build_wind_terrain.py $(if $(WINDNINJA_BIN),--windninja-bin $(WINDNINJA_BIN),--identity)
+
+# MapLibre Terrain-RGB + hillshade source (Cyclades / CHART_CYCLADES bbox by default).
+terrain-rgb:
+	cd services/api && . .venv/bin/activate && \
+		python scripts/build_terrain_rgb.py --cyclades
+
 # Drop multi-GB Overpass / tippecanoe / EMODnet intermediates. Chart PMTiles on
 # disk under apps/web/public/geo/ are kept; rebuild with `make tiles` if needed.
 clean-tile-build:
 	rm -rf data/cache/tiles_build data/cache/overpass
 	@echo "Kept apps/web/public/geo/*.pmtiles (served from disk, not RAM)."
+	@echo "Terrain-RGB under apps/web/public/geo/terrain/ is also kept."
 
 docker-build:
 	docker compose build

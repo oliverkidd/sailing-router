@@ -3,31 +3,36 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BoatConfigPanel from "@/components/BoatConfigPanel";
-import CompareBar from "@/components/CompareBar";
 import CourseEditor, { type EditMode } from "@/components/CourseEditor";
 import ForecastDropdown from "@/components/ForecastDropdown";
 import ForecastPicker from "@/components/ForecastPicker";
 import MapControls from "@/components/MapControls";
 import MapLoadOverlay, { type MapLoadKind } from "@/components/MapLoadOverlay";
-import RouteBuildProgress, { type ModelStatus } from "@/components/RouteBuildProgress";
+import { type ModelStatus } from "@/components/RouteBuildProgress";
+import { applyRouteEvent, initialRouteSteps } from "@/components/RouteProgress";
 import RouteDetailPanel from "@/components/RouteDetailPanel";
-import RouteReview from "@/components/RouteReview";
+import RouteReview, { formatSummaryClipboard } from "@/components/RouteReview";
 import TimeScrubber from "@/components/TimeScrubber";
 import WindLegend from "@/components/WindLegend";
+import ZoomDebugChip from "@/components/ZoomDebugChip";
 import { api } from "@/lib/api";
 import {
+  clearStoredRouteSession,
   courseIsReady,
+  cumulativeDistanceNm,
   currentForecastHourUtc,
   emptyCourse,
   ensureFutureDepart,
+  isPointSet,
   legAtTime,
   loadStoredCourse,
+  loadStoredRouteSession,
   saveStoredCourse,
+  saveStoredRouteSession,
   type MapBounds,
 } from "@/lib/mapOverlays";
 import {
   bboxContains,
-  regionBounds,
   regionCellKey,
   regionNeedsDenserReplace,
 } from "@/lib/windTiles";
@@ -41,7 +46,13 @@ import {
   seriesCoversHour,
   type WindSeries,
 } from "@/lib/meteoGrid";
-import type { BoatConfig, Course, ModelPreset, ModelRoute } from "@/lib/types";
+import type {
+  BoatConfig,
+  Course,
+  ModelPreset,
+  ModelRoute,
+  RouteProgressStep,
+} from "@/lib/types";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
@@ -99,6 +110,8 @@ export default function Home() {
   const [boat, setBoat] = useState<BoatConfig>(INITIAL_BOAT);
   const [course, setCourse] = useState<Course>(INITIAL_COURSE);
   const [courseReadyToPersist, setCourseReadyToPersist] = useState(false);
+  const [sessionHydrated, setSessionHydrated] = useState(false);
+  const skipNextRouteClear = useRef(true);
   const [editMode, setEditMode] = useState<EditMode>("none");
   const [routes, setRoutes] = useState<ModelRoute[]>([]);
   const [running, setRunning] = useState(false);
@@ -107,14 +120,22 @@ export default function Home() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [showWind, setShowWind] = useState(true);
+  const [showDepth, setShowDepth] = useState(true);
   const [viewport, setViewport] = useState<MapBounds | null>(null);
+  const [mapZoom, setMapZoom] = useState(5);
+  /** Browse-only: WindNinja terrain downscaling (always on for routing). */
+  const [windNinjaOpt, setWindNinjaOpt] = useState(true);
 
   const [activeModelId, setActiveModelId] = useState("");
   const [routeIndex, setRouteIndex] = useState(0);
-  const [legIndex, setLegIndex] = useState(0);
   const [detailOpen, setDetailOpen] = useState(false);
   const [fitRouteKey, setFitRouteKey] = useState("");
-  const [prepState, setPrepState] = useState<"idle" | "preparing" | "ready" | "error">("idle");
+  const [prepState, setPrepState] = useState<
+    "idle" | "preparing" | "ready" | "error" | "warning"
+  >("idle");
+  const [routeModal, setRouteModal] = useState<"hidden" | "running" | "error">("hidden");
+  const [routeSteps, setRouteSteps] = useState<RouteProgressStep[]>([]);
+  const [routeWarnings, setRouteWarnings] = useState<string[]>([]);
   const [browseCache, setBrowseCache] = useState<Record<string, WindCacheEntry>>({});
   const [routeCache, setRouteCache] = useState<Record<string, WindSeries>>({});
   const [overlayStatus, setOverlayStatus] = useState<Record<string, ModelStatus>>({});
@@ -166,13 +187,13 @@ export default function Home() {
   // but stop if that hour already failed.
   const windLoading =
     activeStatus === "fetching" || (hourUncovered && activeStatus !== "error");
-  const routeLoading = prepState === "preparing" || running;
+  const routeLoading = routeModal !== "hidden";
 
   let mapLoadKind: MapLoadKind | null = null;
   let mapLoadLabel = "";
   if (routeLoading) {
     mapLoadKind = "route";
-    mapLoadLabel = prepState === "preparing" ? "Preparing route data…" : "Routing…";
+    mapLoadLabel = "Computing route…";
   } else if (windLoading && !windSeries) {
     mapLoadKind = "wind-initial";
     mapLoadLabel = activeModelId ? `Loading ${activeModelId}` : "Loading forecast";
@@ -189,25 +210,47 @@ export default function Home() {
   const playbackPosition = boatAtTime?.position ?? null;
   const playbackHeading = boatAtTime?.heading ?? null;
   const playbackLeg = boatAtTime?.leg ?? null;
+  const playbackDistanceNm = useMemo(() => {
+    if (!activeRoute?.legs?.length || !boatAtTime) return 0;
+    return cumulativeDistanceNm(activeRoute.legs, boatAtTime.index, boatAtTime.position);
+  }, [activeRoute, boatAtTime]);
 
-  useEffect(() => {
-    if (boatAtTime) setLegIndex(boatAtTime.index);
-  }, [boatAtTime]);
+  const courseHasPoints =
+    isPointSet(course.start) || isPointSet(course.finish) || course.marks.length > 0;
 
   useEffect(() => {
     const stored = loadStoredCourse();
     const now = currentForecastHourUtc();
-    if (stored) {
-      setCourse({
-        ...stored,
-        depart_utc: ensureFutureDepart(stored.depart_utc),
-      });
+    const nextCourse = stored
+      ? { ...stored, depart_utc: ensureFutureDepart(stored.depart_utc) }
+      : emptyCourse(now);
+    setCourse(nextCourse);
+
+    const key = JSON.stringify({
+      start: nextCourse.start,
+      finish: nextCourse.finish,
+      marks: nextCourse.marks.map((m) => m.position),
+      depart: nextCourse.depart_utc,
+    });
+    const session = loadStoredRouteSession();
+    if (session && session.courseKey === key && session.routes.length > 0) {
+      setRoutes(session.routes);
+      setRouteWarnings(session.warnings ?? []);
+      setActiveModelId(session.ui.activeModelId || session.routes[0].model_id);
+      setRouteIndex(session.ui.routeIndex ?? 0);
+      setOverlayTimeUtc(session.ui.overlayTimeUtc || nextCourse.depart_utc);
+      setHorizonStartUtc(session.ui.horizonStartUtc || nextCourse.depart_utc);
+      setDetailOpen(Boolean(session.ui.detailOpen));
+      setPrepState("ready");
+      skipNextRouteClear.current = true;
     } else {
-      setCourse(emptyCourse(now));
+      setOverlayTimeUtc(now);
+      setHorizonStartUtc(now);
+      if (session) clearStoredRouteSession();
+      skipNextRouteClear.current = true;
     }
-    setOverlayTimeUtc(now);
-    setHorizonStartUtc(now);
     setCourseReadyToPersist(true);
+    setSessionHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -227,12 +270,48 @@ export default function Home() {
   );
 
   useEffect(() => {
+    if (!sessionHydrated) return;
+    if (skipNextRouteClear.current) {
+      skipNextRouteClear.current = false;
+      return;
+    }
+    clearStoredRouteSession();
     setRouteCache({});
     setRoutes([]);
-    setLegIndex(0);
     setPrepState("idle");
     setRunMsg("");
-  }, [courseRouteKey]);
+    setRouteSteps([]);
+    setRouteWarnings([]);
+    setRouteModal("hidden");
+  }, [courseRouteKey, sessionHydrated]);
+
+  useEffect(() => {
+    if (!sessionHydrated || routes.length === 0) return;
+    saveStoredRouteSession({
+      v: 1,
+      courseKey: courseRouteKey,
+      savedAt: new Date().toISOString(),
+      routes,
+      warnings: routeWarnings,
+      ui: {
+        activeModelId,
+        routeIndex,
+        overlayTimeUtc,
+        horizonStartUtc,
+        detailOpen,
+      },
+    });
+  }, [
+    sessionHydrated,
+    routes,
+    routeWarnings,
+    activeModelId,
+    routeIndex,
+    overlayTimeUtc,
+    horizonStartUtc,
+    detailOpen,
+    courseRouteKey,
+  ]);
 
   useEffect(() => {
     if (routes.length === 0) return;
@@ -251,18 +330,22 @@ export default function Home() {
       atUtc: string,
       merge: boolean,
       onReady?: () => void,
+      zoom?: number,
+      terrain?: boolean,
     ) => {
       browseAbortRefs.current.get(modelId)?.abort();
       const ac = new AbortController();
       browseAbortRefs.current.set(modelId, ac);
       const hour = floorHourIso(atUtc);
-      // Request the padded cell so merges stay on one grid across pans.
-      const reqBounds = regionBounds(viewportBounds);
-      const cacheRegion = reqBounds;
+      // First request covers focus..(focus + PREFETCH_WINDOW_H - 1) in one call.
+      const endHour = hoursAheadIso(hour, PREFETCH_WINDOW_H - 1);
+      // Send raw viewport — server pads once and returns the display window.
+      const reqBounds = viewportBounds;
+      const useTerrain = terrain ?? windNinjaOpt;
       setStatus(modelId, "fetching");
       if (modelId === activeModelId) setOverlayMsg(null);
 
-      fetchWindArea(reqBounds, modelId, hour, hour, ac.signal)
+      fetchWindArea(reqBounds, modelId, hour, endHour, ac.signal, zoom, useTerrain)
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
@@ -271,7 +354,8 @@ export default function Home() {
               const merged =
                 merge && existing ? mergeSeries(existing.series, series) : series;
               const last = merged.times[merged.times.length - 1] ?? hour;
-              // Chart tiles stay on disk; only keep the active model's wind in RAM.
+              // Cache region = returned series bbox (what we can render).
+              const cacheRegion = merged.bbox ?? series.bbox ?? reqBounds;
               return {
                 [modelId]: {
                   series: merged,
@@ -309,11 +393,18 @@ export default function Home() {
           }
         });
     },
-    [activeModelId, setStatus],
+    [activeModelId, setStatus, windNinjaOpt],
   );
 
   const prefetchBrowseRange = useCallback(
-    (modelId: string, viewportBounds: MapBounds, startUtc: string, endUtc: string) => {
+    (
+      modelId: string,
+      viewportBounds: MapBounds,
+      startUtc: string,
+      endUtc: string,
+      zoom?: number,
+      terrain?: boolean,
+    ) => {
       const start = floorHourIso(startUtc);
       const end = floorHourIso(endUtc);
       if (new Date(end).getTime() < new Date(start).getTime()) return;
@@ -322,8 +413,10 @@ export default function Home() {
       const gap = missingRange(entry?.series, start, end);
       if (!gap) return;
 
-      const reqBounds = regionBounds(viewportBounds);
-      const key = `${gap.start}|${gap.end}|${reqBounds.lat_min},${reqBounds.lon_min},${reqBounds.lat_max},${reqBounds.lon_max}`;
+      const reqBounds = viewportBounds;
+      const z = zoom ?? mapZoom;
+      const useTerrain = terrain ?? windNinjaOpt;
+      const key = `${gap.start}|${gap.end}|${reqBounds.lat_min},${reqBounds.lon_min},${reqBounds.lat_max},${reqBounds.lon_max}|${z}|t=${useTerrain ? 1 : 0}`;
       if (prefetchKeyRef.current.get(modelId) === key) return;
 
       prefetchAbortRefs.current.get(modelId)?.abort();
@@ -331,7 +424,7 @@ export default function Home() {
       prefetchAbortRefs.current.set(modelId, ac);
       prefetchKeyRef.current.set(modelId, key);
 
-      fetchWindArea(reqBounds, modelId, gap.start, gap.end, ac.signal)
+      fetchWindArea(reqBounds, modelId, gap.start, gap.end, ac.signal, z, useTerrain)
         .then(({ series }) => {
           if (ac.signal.aborted || !series) return;
           setBrowseCache((prev) => {
@@ -340,7 +433,7 @@ export default function Home() {
               return {
                 [modelId]: {
                   series,
-                  region: reqBounds,
+                  region: series.bbox ?? reqBounds,
                   loadedEndUtc: series.times[series.times.length - 1] ?? gap.end,
                 },
               };
@@ -364,7 +457,7 @@ export default function Home() {
           }
         });
     },
-    [],
+    [mapZoom, windNinjaOpt],
   );
 
   const scheduleBrowseWindow = useCallback(
@@ -374,20 +467,28 @@ export default function Home() {
       focusUtc: string,
       horizonEnd: string,
       opts?: { forceReplace?: boolean },
+      zoom?: number,
+      terrain?: boolean,
     ) => {
       const focus = floorHourIso(focusUtc);
       const entry = browseCacheRef.current[modelId];
-      const reqRegion = regionBounds(viewportBounds);
+      const z = zoom ?? mapZoom;
+      const useTerrain = terrain ?? windNinjaOpt;
       const inRegion = !!(entry && bboxContains(entry.region, viewportBounds, 0.05));
-      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.region, reqRegion));
+      // Density replace only when the cached display window is much larger than viewport.
+      const denserNeeded = !!(
+        entry && regionNeedsDenserReplace(entry.region, viewportBounds)
+      );
       const merge = inRegion && !opts?.forceReplace && !denserNeeded;
+      // First fetch already covers focus..(focus+PREFETCH_WINDOW_H-1).
       const needFocus = !merge || !entry || !seriesCoversHour(entry.series, focus);
 
       const kickPrefetch = () => {
+        // Extend beyond the initial window when scrubbing forward.
         const aheadEnd = capHour(hoursAheadIso(focus, PREFETCH_WINDOW_H - 1), horizonEnd);
         const prefetchStart = hoursAheadIso(focus, 1);
         if (new Date(prefetchStart).getTime() <= new Date(aheadEnd).getTime()) {
-          prefetchBrowseRange(modelId, viewportBounds, prefetchStart, aheadEnd);
+          prefetchBrowseRange(modelId, viewportBounds, prefetchStart, aheadEnd, z, useTerrain);
         }
       };
 
@@ -396,14 +497,21 @@ export default function Home() {
           prefetchAbortRefs.current.get(modelId)?.abort();
           prefetchKeyRef.current.delete(modelId);
         }
-        // After a cell replace, wait for focus so prefetch can't be wiped by merge=false.
-        fetchBrowseFocus(modelId, viewportBounds, focus, merge, merge ? undefined : kickPrefetch);
+        fetchBrowseFocus(
+          modelId,
+          viewportBounds,
+          focus,
+          merge,
+          merge ? undefined : kickPrefetch,
+          z,
+          useTerrain,
+        );
         if (merge) queueMicrotask(kickPrefetch);
       } else {
         kickPrefetch();
       }
     },
-    [fetchBrowseFocus, prefetchBrowseRange],
+    [fetchBrowseFocus, prefetchBrowseRange, mapZoom, windNinjaOpt],
   );
 
   // Load route-window series into routeCache per route model (no refetch on tab switch).
@@ -422,7 +530,7 @@ export default function Home() {
       const { start, end } = routeTimeWindow(route, course.depart_utc);
       setStatus(modelId, "fetching");
 
-      fetchWindArea(bbox, modelId, start, end, ac.signal)
+      fetchWindArea(bbox, modelId, start, end, ac.signal, mapZoom)
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
@@ -444,7 +552,7 @@ export default function Home() {
     };
     // Intentionally omit routeCache from deps — we gate on miss inside the loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routes, courseRouteKey, course, apiUp, setStatus]);
+  }, [routes, courseRouteKey, course, apiUp, setStatus, mapZoom]);
 
   // Browse: only the active model — wind series stay small in RAM; chart tiles are on disk.
   useEffect(() => {
@@ -455,26 +563,27 @@ export default function Home() {
     const t = setTimeout(() => {
       const id = activeModelId;
       const focus = floorHourIso(overlayTimeUtc);
-      const reqRegion = regionBounds(viewport);
       const entry = browseCacheRef.current[id];
       const inRegion = !!(entry && bboxContains(entry.region, viewport, 0.05));
-      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.region, reqRegion));
+      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.region, viewport));
       if (inRegion && !denserNeeded && entry && seriesCoversHour(entry.series, focus)) {
         const aheadEnd = capHour(hoursAheadIso(focus, PREFETCH_WINDOW_H - 1), horizonEndUtc);
         const prefetchStart = hoursAheadIso(focus, 1);
         if (new Date(prefetchStart).getTime() <= new Date(aheadEnd).getTime()) {
-          prefetchBrowseRange(id, viewport, prefetchStart, aheadEnd);
+          prefetchBrowseRange(id, viewport, prefetchStart, aheadEnd, mapZoom);
         }
         return;
       }
       scheduleBrowseWindow(id, viewport, focus, horizonEndUtc, {
         forceReplace: !inRegion || denserNeeded,
-      });
+      }, mapZoom);
     }, 250);
 
     return () => clearTimeout(t);
   }, [
     viewport,
+    mapZoom,
+    windNinjaOpt,
     selected,
     activeModelId,
     apiUp,
@@ -501,11 +610,12 @@ export default function Home() {
     const extendStart = hoursAheadIso(runMax, 1);
     const extendEnd = capHour(hoursAheadIso(runMax, PREFETCH_WINDOW_H), horizonEndUtc);
     if (new Date(extendStart).getTime() > new Date(extendEnd).getTime()) return;
-    prefetchBrowseRange(activeModelId, viewport, extendStart, extendEnd);
+    prefetchBrowseRange(activeModelId, viewport, extendStart, extendEnd, mapZoom);
   }, [
     overlayTimeUtc,
     browseCache,
     viewport,
+    mapZoom,
     activeModelId,
     apiUp,
     routes.length,
@@ -538,8 +648,9 @@ export default function Home() {
     if (overlayStatus[activeModelId] !== "error") setOverlayMsg(null);
   }, [activeModelId, overlayStatus]);
 
-  const handleViewportChange = useCallback((bounds: MapBounds, _span: number) => {
+  const handleViewportChange = useCallback((bounds: MapBounds, _span: number, zoom: number) => {
     setViewport(bounds);
+    setMapZoom(zoom);
   }, []);
 
   useEffect(() => {
@@ -562,8 +673,12 @@ export default function Home() {
           availableCacheRef.current.set(cell, list);
           setAvailableModels(list);
         })
-        .catch(() => {
+        .catch((err) => {
           if (ac.signal.aborted) return;
+          console.warn("[forecast] /models/available failed", {
+            cell,
+            error: err instanceof Error ? err.message : String(err),
+          });
           setAvailableModels([]);
         });
     }, 200);
@@ -588,6 +703,26 @@ export default function Home() {
           },
         ],
       }));
+    setEditMode("none");
+  };
+
+  const clearCourse = () => {
+    setCourse((c) => ({
+      ...c,
+      start: [0, 0],
+      finish: [0, 0],
+      marks: [],
+    }));
+    setEditMode("none");
+  };
+
+  const copySummary = async () => {
+    const text = formatSummaryClipboard(course, selected, availableModels);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      /* clipboard may be blocked */
+    }
   };
 
   const toggleModel = (id: string) => {
@@ -623,6 +758,16 @@ export default function Home() {
     setSelected(next);
   };
 
+  const dismissRouteModal = () => {
+    setRouteModal("hidden");
+    setRouteSteps([]);
+    setRouteWarnings([]);
+    setRunMsg("");
+    setPrepState("idle");
+    setRoutes([]);
+    setRouteCache({});
+  };
+
   const runRoute = async () => {
     const modelIds = Array.from(selected);
     if (!boat.polar_id) {
@@ -642,53 +787,108 @@ export default function Home() {
     }
 
     setRunning(true);
+    setRouteModal("running");
     setPrepState("preparing");
     setRunMsg("");
+    setRouteWarnings([]);
+    setRoutes([]);
+    setRouteCache({});
+    setRouteSteps(initialRouteSteps(modelIds, course));
     try {
-      const prep = await api.prepareCourse({ course, model_ids: modelIds });
-      const ok = prep.models.filter((m) => m.status === "fetched" || m.status === "cached");
-      if (ok.length === 0) {
-        setPrepState("error");
-        const detail = prep.models
-          .filter((m) => m.status === "error")
-          .map((m) => `${m.model_id}: ${m.message ?? "failed"}`)
-          .join("; ");
-        setRunMsg(detail || "Forecast prefetch failed.");
-        return;
-      }
+      const warningsAcc: string[] = [];
+      const res = await api.routeStream(
+        {
+          course,
+          boat,
+          model_ids: modelIds,
+          time_step_s: 300,
+          heading_step_deg: 7.5,
+        },
+        (event) => {
+          if (event.type === "stage" && event.status === "start") {
+            setPrepState("ready");
+          }
+          if (event.type === "warning") {
+            warningsAcc.push(event.message);
+            setRouteWarnings([...warningsAcc]);
+          } else if (event.type === "error") {
+            warningsAcc.push(event.message);
+            setRouteWarnings([...warningsAcc]);
+            setPrepState("error");
+            setRunMsg(event.message);
+          }
+          setRouteSteps((prev) => applyRouteEvent(prev, event));
+        },
+      );
 
-      setPrepState("ready");
-      setRunMsg("Routing…");
-      const res = await api.route({
-        course,
-        boat,
-        model_ids: modelIds,
-        time_step_s: 300,
-        heading_step_deg: 7.5,
-      });
-      setRoutes(res.routes);
-      setRouteCache({});
-      if (res.routes.length > 0) {
+      const allWarnings = [...new Set([...warningsAcc, ...res.warnings])];
+      setRouteWarnings(allWarnings);
+
+      const unfinished = res.routes.some((r) => r.unreachable);
+      const failed = res.routes.length === 0 || unfinished;
+
+      if (failed) {
+        // Keep modal open; do not show a partial route on the map.
+        setRoutes([]);
+        setPrepState("error");
+        setRunMsg(
+          allWarnings.find((w) => w.includes("unreachable") || w.includes("unfinished")) ||
+            allWarnings[0] ||
+            "Route unfinished — some marks unreachable",
+        );
+        setRouteSteps((prev) => {
+          const copy = prev.map((s) => ({ ...s }));
+          // Ensure a failed leg shows error if stream only sent warnings.
+          const errIdx = copy.findIndex((s) => s.status === "error");
+          if (errIdx < 0) {
+            const active = copy.findIndex((s) => s.status === "active");
+            const pendingLeg = copy.findIndex(
+              (s) => s.id.startsWith("leg:") && s.status === "pending",
+            );
+            const target = active >= 0 ? active : pendingLeg;
+            if (target >= 0) {
+              copy[target] = {
+                ...copy[target],
+                status: "error",
+                detail: allWarnings[0] || "unreachable",
+              };
+            }
+          }
+          return copy;
+        });
+        setRouteModal("error");
+      } else {
+        setRoutes(res.routes);
         setActiveModelId(res.routes[0].model_id);
         setRouteIndex(0);
         setOverlayTimeUtc(course.depart_utc);
-        setRunMsg("");
-        if (res.warnings.length) console.warn("[route] warnings:", res.warnings);
-      } else {
-        setPrepState("error");
-        setRunMsg(
-          res.warnings.length
-            ? res.warnings.join(" ")
-            : "No routes computed — forecast data could not be loaded.",
-        );
+        setShowWind(true);
+        setFitRouteKey(`${Date.now()}-${res.routes.length}`);
+        if (allWarnings.length > 0) {
+          setPrepState("warning");
+          setRunMsg(allWarnings[0]);
+          setRouteWarnings(allWarnings);
+        } else {
+          setPrepState("ready");
+          setRunMsg("");
+          setRouteWarnings([]);
+        }
+        setRouteModal("hidden");
+        setRouteSteps([]);
       }
-      setLegIndex(0);
-      setShowWind(true);
-      setFitRouteKey(`${Date.now()}-${res.routes.length}`);
     } catch (e) {
       console.error("[route] failed:", e);
       setPrepState("error");
       setRunMsg(String(e));
+      setRoutes([]);
+      setRouteSteps((prev) => {
+        const active = prev.findIndex((s) => s.status === "active");
+        if (active < 0) return prev;
+        const copy = prev.map((s) => ({ ...s }));
+        copy[active] = { ...copy[active], status: "error", detail: String(e) };
+        return copy;
+      });
+      setRouteModal("error");
     } finally {
       setRunning(false);
     }
@@ -708,7 +908,18 @@ export default function Home() {
     <div id="app-shell">
       <aside className="rail">
         <div className="rail-section">
-          <h2>Course</h2>
+          <div className="rail-section-head">
+            <h2>Course</h2>
+            <button
+              type="button"
+              className="rail-section-action"
+              onClick={clearCourse}
+              disabled={!courseHasPoints}
+              title="Clear course"
+            >
+              Clear
+            </button>
+          </div>
           <CourseEditor
             course={course}
             onCourseChange={setCourse}
@@ -729,13 +940,25 @@ export default function Home() {
         </div>
 
         <div className="rail-section">
-          <h2>Route</h2>
+          <div className="rail-section-head">
+            <h2>Summary</h2>
+            <button
+              type="button"
+              className="rail-section-action"
+              onClick={copySummary}
+              disabled={!courseIsReady(course)}
+              title="Copy summary to clipboard"
+            >
+              Copy
+            </button>
+          </div>
           <RouteReview
             course={course}
             selected={selected}
             models={availableModels}
-            running={running}
+            running={running || routeModal === "error"}
             prepState={prepState}
+            message={routeModal === "hidden" ? runMsg || undefined : undefined}
             onRun={runRoute}
           />
         </div>
@@ -746,13 +969,34 @@ export default function Home() {
           routes={routes}
           course={course}
           showWind={showWind}
+          showDepth={showDepth}
           windTimeUtc={routes.length > 0 ? scrubHourUtc : overlayTimeUtc}
           windSeries={windSeries}
           playbackPosition={playbackPosition}
           playbackHeading={playbackHeading}
           fitRouteKey={fitRouteKey}
+          editMode={editMode}
           onMapClick={editMode === "none" ? undefined : handleMapClick}
           onRouteSelect={setActiveModelId}
+          onRouteSeek={(id, t) => {
+            setActiveModelId(id);
+            setOverlayTimeUtc(t);
+          }}
+          onCoursePointMove={(kind, index, lat, lon) => {
+            setCourse((c) => {
+              if (kind === "start") return { ...c, start: [lat, lon] };
+              if (kind === "finish") return { ...c, finish: [lat, lon] };
+              if (kind === "mark" && index != null) {
+                return {
+                  ...c,
+                  marks: c.marks.map((mk, i) =>
+                    i === index ? { ...mk, position: [lat, lon] } : mk,
+                  ),
+                };
+              }
+              return c;
+            });
+          }}
           onOverlayError={setOverlayMsg}
           onViewportChange={handleViewportChange}
         />
@@ -765,13 +1009,63 @@ export default function Home() {
           routeActive={routes.length > 0}
           leg={playbackLeg}
           playUntilUtc={activeRoute?.eta_utc ?? null}
+          distanceNm={playbackDistanceNm}
+          routes={routes}
+          activeModelId={activeModelId}
+          modelLabels={Object.fromEntries(availableModels.map((m) => [m.id, m.label]))}
+          onActiveModel={setActiveModelId}
         />
-        <MapLoadOverlay kind={mapLoadKind} label={mapLoadLabel} />
+        <MapLoadOverlay
+          kind={mapLoadKind}
+          label={mapLoadLabel}
+          routeSteps={routeLoading ? routeSteps : undefined}
+          routeWarnings={routeLoading ? routeWarnings : undefined}
+          routeError={routeModal === "error"}
+          onRetry={runRoute}
+          onEdit={dismissRouteModal}
+        />
         {activeError && <div className="map-error-banner">{activeError}</div>}
         <MapControls
-          toggles={{ showWind }}
+          toggles={{ showWind, showDepth }}
           onChange={(patch) => {
             if (patch.showWind !== undefined) setShowWind(patch.showWind);
+            if (patch.showDepth !== undefined) setShowDepth(patch.showDepth);
+          }}
+        />
+        <ZoomDebugChip
+          zoom={mapZoom}
+          terrainOn={windNinjaOpt}
+          terrainDisabled={routes.length > 0}
+          terrainLibrary={windSeries?.terrain_library ?? null}
+          terrainApplied={windSeries?.terrain_applied ?? null}
+          terrainLibraryVersion={windSeries?.terrain_library_version ?? null}
+          onTerrainToggle={(on) => {
+            setWindNinjaOpt(on);
+            if (routes.length > 0) return;
+            // Bust browse cache so the next fetch reflects the new setting.
+            if (activeModelId) {
+              browseAbortRefs.current.get(activeModelId)?.abort();
+              prefetchAbortRefs.current.get(activeModelId)?.abort();
+              prefetchKeyRef.current.delete(activeModelId);
+              setBrowseCache((prev) => {
+                const next = { ...prev };
+                delete next[activeModelId];
+                return next;
+              });
+            } else {
+              setBrowseCache({});
+            }
+            if (viewport && activeModelId && apiUp === true) {
+              scheduleBrowseWindow(
+                activeModelId,
+                viewport,
+                overlayTimeUtc,
+                horizonEndUtc,
+                { forceReplace: true },
+                mapZoom,
+                on,
+              );
+            }
           }}
         />
         <WindLegend visible={showWind && !!windSeries} />
@@ -788,6 +1082,8 @@ export default function Home() {
             models={availableModels}
             selected={selected}
             onToggle={toggleModel}
+            apiUp={apiUp}
+            hasViewport={viewport != null}
           />
         </div>
       </div>
@@ -795,24 +1091,16 @@ export default function Home() {
       <RouteDetailPanel
         routes={routes}
         routeIndex={displayRouteIndex}
-        legIndex={legIndex}
+        currentTimeUtc={overlayTimeUtc}
         open={detailOpen}
         onToggle={() => setDetailOpen((o) => !o)}
         onRouteIndex={(i) => {
           setRouteIndex(i);
           if (routes[i]) setActiveModelId(routes[i].model_id);
         }}
+        onSeek={setOverlayTimeUtc}
+        modelLabels={Object.fromEntries(availableModels.map((m) => [m.id, m.label]))}
       />
-
-      <div className="compare-bar">
-        <RouteBuildProgress
-          prepState={prepState}
-          running={running}
-          routeCount={routes.length}
-          message={runMsg || undefined}
-        />
-        <CompareBar routes={routes} />
-      </div>
     </div>
   );
 }

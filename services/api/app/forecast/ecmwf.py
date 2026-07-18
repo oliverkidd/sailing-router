@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -106,11 +107,39 @@ class EcmwfSource(GribSource):
         }
         if self.model == "ifs":
             kwargs["stream"] = "oper"
+        t0 = time.perf_counter()
+        logger.info(
+            "ECMWF %s retrieve batch cycle=%s steps=%s",
+            self.spec.model_id,
+            cycle.isoformat(),
+            steps,
+        )
         try:
             client.retrieve(**kwargs)
+            logger.info(
+                "ECMWF %s batch OK %.0fms steps=%s",
+                self.spec.model_id,
+                (time.perf_counter() - t0) * 1000,
+                steps,
+            )
         except Exception as exc:  # noqa: BLE001
+            elapsed_ms = (time.perf_counter() - t0) * 1000
             if _is_rate_limit(exc):
+                logger.warning(
+                    "ECMWF %s rate limited after %.0fms steps=%s: %s",
+                    self.spec.model_id,
+                    elapsed_ms,
+                    steps,
+                    exc,
+                )
                 raise ForecastRateLimitError(self.spec.model_id, str(exc)) from exc
+            logger.error(
+                "ECMWF %s batch FAILED after %.0fms steps=%s: %s",
+                self.spec.model_id,
+                elapsed_ms,
+                steps,
+                exc,
+            )
             raise
 
     def fetch(self, bbox: BBox, cycle: datetime, steps: list[int]):

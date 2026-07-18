@@ -35,6 +35,15 @@ data/currents/*.nc
 data/forecast/*.nc
 data/forecast/*.zarr/
 
+# WindNinja local build (source + binary under tools/)
+tools/windninja/src/
+tools/windninja/build/
+tools/windninja/bin/
+tools/windninja/data
+tools/windninja/*.hpp
+tools/windninja/install.log
+!tools/windninja/.gitkeep
+
 # Large coastline downloads (make fetch-geo)
 data/geo/gshhg/
 data/geo/osm/
@@ -43,7 +52,10 @@ data/geo/ne_*.geojson
 # Intermediate tile-build workspace + generated chart tiles (build with `make tiles`)
 data/geo/bathymetry/
 data/cache/tiles_build/
+data/geo/archive/
 apps/web/public/geo/*.pmtiles
+apps/web/public/geo/terrain/
+apps/web/public/geo/dem_coverage.geojson
 
 # OS
 .DS_Store

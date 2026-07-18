@@ -14,6 +14,7 @@ from .grib_source import (
     bunzip2,
     grib_bytes_to_component,
     http_get,
+    map_steps_parallel,
     register,
 )
 
@@ -57,27 +58,24 @@ class DwdIconSource(GribSource):
         steps = list(steps) or [0]
         url_fn = _icon_eu_url if self.kind == "icon-eu" else _icon_d2_url
 
-        per_step: list[tuple[float, object, object]] = []
+        def fetch_one(step: int):
+            u_raw = bunzip2(http_get(url_fn(cycle, step, "u_10m")))
+            v_raw = bunzip2(http_get(url_fn(cycle, step, "v_10m")))
+            la, lo, u2d, te = grib_bytes_to_component(u_raw, which="u")
+            _, _, v2d, _ = grib_bytes_to_component(v_raw, which="v")
+            return te, u2d, v2d, la, lo
+
+        ordered = map_steps_parallel(steps, fetch_one)
+        if not ordered:
+            raise RuntimeError(f"{self.kind}: no GRIB steps fetched for cycle {cycle}")
+
         lats = lons = None
-        consecutive_fail = 0
-        for step in steps:
-            try:
-                u_raw = bunzip2(http_get(url_fn(cycle, step, "u_10m")))
-                v_raw = bunzip2(http_get(url_fn(cycle, step, "v_10m")))
-                la, lo, u2d, te = grib_bytes_to_component(u_raw, which="u")
-                _, _, v2d, _ = grib_bytes_to_component(v_raw, which="v")
-                if lats is None:
-                    lats, lons = la, lo
-                per_step.append((te, u2d, v2d))
-                consecutive_fail = 0
-            except Exception as exc:  # noqa: BLE001
-                consecutive_fail += 1
-                logger.warning("%s step %s failed: %s", self.kind, step, exc)
-                if consecutive_fail >= 2 and not per_step:
-                    raise RuntimeError(f"{self.kind}: first steps failed ({exc})") from exc
-                if consecutive_fail >= 3:
-                    break
-                continue
+        per_step: list[tuple[float, object, object]] = []
+        for _step, payload in ordered:
+            te, u2d, v2d, la, lo = payload  # type: ignore[misc]
+            if lats is None:
+                lats, lons = la, lo
+            per_step.append((te, u2d, v2d))
 
         if not per_step or lats is None or lons is None:
             raise RuntimeError(f"{self.kind}: no GRIB steps fetched for cycle {cycle}")

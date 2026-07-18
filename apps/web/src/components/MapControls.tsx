@@ -2,6 +2,7 @@
 
 export interface OverlayToggles {
   showWind: boolean;
+  showDepth: boolean;
 }
 
 export default function MapControls({
@@ -28,6 +29,9 @@ export default function MapControls({
     <div className="map-controls">
       <button type="button" style={btn(toggles.showWind)} onClick={() => onChange({ showWind: !toggles.showWind })}>
         Show wind
+      </button>
+      <button type="button" style={btn(toggles.showDepth)} onClick={() => onChange({ showDepth: !toggles.showDepth })}>
+        Show depth
       </button>
     </div>
   );

@@ -15,10 +15,14 @@ export default function ForecastDropdown({
   models,
   selected,
   onToggle,
+  apiUp,
+  hasViewport,
 }: {
   models: ModelPreset[];
   selected: Set<string>;
   onToggle: (id: string) => void;
+  apiUp?: boolean | null;
+  hasViewport?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -77,7 +81,13 @@ export default function ForecastDropdown({
       {open && (
         <div className="forecast-dropdown-menu" role="listbox">
           {models.length === 0 ? (
-            <div className="forecast-dropdown-empty">Zoom to an area to see available forecasts.</div>
+            <div className="forecast-dropdown-empty">
+              {apiUp === false
+                ? "Forecast API unavailable — try restarting the dev server."
+                : !hasViewport
+                  ? "Zoom to an area to see available forecasts."
+                  : "No forecasts available for this area."}
+            </div>
           ) : (
             <>
               {renderGroup("GLOBAL", global)}

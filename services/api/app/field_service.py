@@ -1,4 +1,4 @@
-"""Central wind field service: canonical normalize + incremental cache."""
+"""Central wind field service: native-res forcing cache + WindProvider seam."""
 
 from __future__ import annotations
 
@@ -16,27 +16,23 @@ from .config import MODEL_PRESETS_BY_ID, WIND_TTL_S, model_is_configured
 from .forecast import get_source
 from .forecast.grib_source import ForecastRateLimitError
 from .metocean import WindField
-from .overlays.grid import display_series_payload
 from .schemas import BBox
 from .util.bbox import (
-    CANON_RES_DEG,
-    budget_dims,
     canonical_grid,
     hourly_epochs,
     region_bbox,
 )
 from .util.horizon import routing_horizon_h
 from .util.timeparse import parse_utc_iso
+from .wind.provider import get_provider
 
 logger = logging.getLogger(__name__)
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
-# Tiny in-process hint only — canonical fields live on disk as Zarr under
-# data/cache/forecast/. Holding many full grids here blows RAM (Cursor /
-# API OOM / workspace disconnects). Re-read from Zarr on miss.
-_LRU_MAX = 1
+# Native-res grids are smaller than the old 500 m grids — keep a few warm.
+_LRU_MAX = 4
 _lru: OrderedDict[str, WindField] = OrderedDict()
 _lru_guard = threading.Lock()
 
@@ -79,6 +75,14 @@ def _to_utc(dt: datetime) -> datetime:
     return dt.astimezone(UTC)
 
 
+def _forcing_res_deg(model_id: str) -> float:
+    """Store forcing at the model's native resolution (not 500 m)."""
+    preset = MODEL_PRESETS_BY_ID.get(model_id)
+    if preset is None or preset.resolution_deg <= 0:
+        return 0.25
+    return float(preset.resolution_deg)
+
+
 def get_area_field(
     model_id: str,
     bbox: BBox,
@@ -87,11 +91,14 @@ def get_area_field(
     end: datetime,
     cycle: str = "latest",
 ) -> WindField | None:
-    """Load or fetch a canonical (500 m + hourly) WindField covering bbox/window.
+    """Load or fetch coarse NWP forcing at model-native resolution + hourly.
 
     Returns None on failure (caller reports 'unavailable'). No Open-Meteo fallback.
     Delta-extends the cached field when only some hours are missing.
     Raises ForecastRateLimitError when the upstream CDN rate-limits.
+
+    This is the FORCING cache only — terrain downscaling is applied by
+    WindProvider / DownscaledWindField on top.
     """
     t_all = time.perf_counter()
     if MODEL_PRESETS_BY_ID.get(model_id) is None:
@@ -121,13 +128,14 @@ def get_area_field(
         start, end = end, start
 
     region = region_bbox(bbox)
+    res_deg = _forcing_res_deg(model_id)
     try:
-        lats_t, lons_t = canonical_grid(region)
+        lats_t, lons_t = canonical_grid(region, res_deg=res_deg)
     except ValueError as exc:
         logger.warning("canonical grid failed for %s: %s", model_id, exc)
         return None
 
-    key = f"{model_id}|{region.key()}|{cyc.isoformat()}"
+    key = f"{model_id}|{region.key()}|{cyc.isoformat()}|{res_deg}"
     needed = hourly_epochs(start, end)
     if not needed:
         return None
@@ -143,8 +151,7 @@ def get_area_field(
                 logger.warning("cache read failed %s: %s", row.zarr_path, exc)
                 cached = None
 
-        # Covering-region cache hits can have a denser/wider grid than this
-        # request's canonical axes — regrid onto (lats_t, lons_t) before use.
+        # Covering-region / resolution mismatches — regrid onto (lats_t, lons_t).
         if cached is not None and (
             cached.lats.size != lats_t.size
             or cached.lons.size != lons_t.size
@@ -176,12 +183,13 @@ def get_area_field(
         missing = [h for h in needed if float(round(h)) not in have]
         if not missing and cached is not None:
             logger.info(
-                "wind %s cache-hit region=%s hours=%d grid=%dx%d total=%.0fms",
+                "wind %s cache-hit region=%s hours=%d grid=%dx%d res=%.4f total=%.0fms",
                 model_id,
                 region.key(),
                 len(needed),
                 lats_t.size,
                 lons_t.size,
+                res_deg,
                 (time.perf_counter() - t_all) * 1000,
             )
             return cached
@@ -191,7 +199,7 @@ def get_area_field(
         m_end = datetime.fromtimestamp(max(missing), UTC)
         steps = src.steps_for_window(cyc, m_start, m_end)
         logger.info(
-            "wind %s cache-miss region=%s missing=%d/%d steps=%d grid=%dx%d",
+            "wind %s cache-miss region=%s missing=%d/%d steps=%d grid=%dx%d res=%.4f",
             model_id,
             region.key(),
             len(missing),
@@ -199,6 +207,7 @@ def get_area_field(
             len(steps),
             lats_t.size,
             lons_t.size,
+            res_deg,
         )
         try:
             t_fetch = time.perf_counter()
@@ -221,7 +230,7 @@ def get_area_field(
                 merged,
                 path,
                 WIND_TTL_S,
-                res_deg=CANON_RES_DEG,
+                res_deg=res_deg,
             )
             _lru_put(str(path), merged)
             write_ms = (time.perf_counter() - t_write) * 1000
@@ -250,13 +259,14 @@ def ensure_wind_window(
     *,
     start: datetime,
     end: datetime,
-) -> WindField | None:
-    """Ensure hourly canonical wind for [start,end] on region_bbox(bbox).
+):
+    """Downscaled WindField for [start,end] — used by prepare + /route.
 
-    Same path as map /wind/area (minus display downsample). Used by prepare + /route.
+    Returns a DownscaledWindField when a terrain library is present, else the
+    raw forcing WindField. Both expose wind_at(lat, lon, t).
     Raises ForecastRateLimitError; returns None if unavailable.
     """
-    return get_area_field(model_id, bbox, start=start, end=end)
+    return get_provider().downscaled_field(model_id, bbox, start=start, end=end)
 
 
 def get_display_series(
@@ -265,13 +275,18 @@ def get_display_series(
     *,
     start: datetime,
     end: datetime,
+    zoom: float | None = None,
+    enable_terrain: bool = True,
 ) -> dict | None:
-    """Return a multi-hour series payload; downsample under MAX_DISPLAY_PTS when large."""
-    field = get_area_field(model_id, bbox, start=start, end=end)
-    if field is None:
-        return None
-    nlat, nlon = budget_dims(bbox, CANON_RES_DEG)
-    return display_series_payload(field, bbox, nlat, nlon, start, end)
+    """Multi-hour series via WindProvider (zoom-tiered display window)."""
+    return get_provider().display_series(
+        model_id,
+        bbox,
+        start=start,
+        end=end,
+        zoom=zoom,
+        enable_terrain=enable_terrain,
+    )
 
 
 def forecast_horizon_for_course(course) -> int:

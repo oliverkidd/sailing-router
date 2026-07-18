@@ -22,6 +22,7 @@ export function boundsFromMap(
 }
 
 export const COURSE_STORAGE_KEY = "sailing-router-course-v1";
+export const ROUTE_SESSION_KEY = "sailing-router-route-session-v1";
 
 export function loadStoredCourse(): Course | null {
   if (typeof window === "undefined") return null;
@@ -39,15 +40,109 @@ export function saveStoredCourse(course: Course) {
   localStorage.setItem(COURSE_STORAGE_KEY, JSON.stringify(course));
 }
 
+export interface RouteSessionV1 {
+  v: 1;
+  courseKey: string;
+  savedAt: string;
+  routes: import("./types").ModelRoute[];
+  warnings: string[];
+  ui: {
+    activeModelId: string;
+    routeIndex: number;
+    overlayTimeUtc: string;
+    horizonStartUtc: string;
+    detailOpen: boolean;
+  };
+}
+
+export function loadStoredRouteSession(): RouteSessionV1 | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(ROUTE_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RouteSessionV1;
+    if (parsed?.v !== 1 || !Array.isArray(parsed.routes)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveStoredRouteSession(session: RouteSessionV1) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(ROUTE_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // Quota exceeded — drop session rather than breaking the app.
+    try {
+      localStorage.removeItem(ROUTE_SESSION_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function clearStoredRouteSession() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(ROUTE_SESSION_KEY);
+}
+
+export function isPointSet(p: LatLon | null | undefined): boolean {
+  if (!p || p.length !== 2) return false;
+  return !(p[0] === 0 && p[1] === 0);
+}
+
 export function courseIsReady(course: Course | null | undefined): boolean {
   if (!course) return false;
-  return (
-    Array.isArray(course.start) &&
-    course.start.length === 2 &&
-    Array.isArray(course.finish) &&
-    course.finish.length === 2 &&
-    !(course.start[0] === 0 && course.start[1] === 0 && course.finish[0] === 0 && course.finish[1] === 0)
-  );
+  return isPointSet(course.start) && isPointSet(course.finish);
+}
+
+/** Haversine distance in nautical miles. */
+export function haversineNm(a: LatLon, b: LatLon): number {
+  const R = 3440.065; // Earth radius in nm
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLon = toRad(b[1] - a[1]);
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+
+/** Crow-flies course distance through marks: start -> marks -> finish. */
+export function courseDistanceNm(course: Course): number {
+  if (!isPointSet(course.start) || !isPointSet(course.finish)) return 0;
+  const pts: LatLon[] = [
+    course.start,
+    ...course.marks.map((m) => m.position),
+    course.finish,
+  ];
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    total += haversineNm(pts[i], pts[i + 1]);
+  }
+  return total;
+}
+
+/**
+ * Cumulative sailed distance along route legs up to `index`, plus the
+ * remaining segment from legs[index] to `position` (for scrubber interpolation).
+ */
+export function cumulativeDistanceNm(
+  legs: RouteLeg[],
+  index: number,
+  position: LatLon,
+): number {
+  if (!legs.length) return 0;
+  let total = 0;
+  const end = Math.min(index, legs.length - 1);
+  for (let i = 0; i < end; i++) {
+    total += haversineNm(legs[i].position, legs[i + 1].position);
+  }
+  if (end >= 0 && end < legs.length) {
+    total += haversineNm(legs[end].position, position);
+  }
+  return total;
 }
 
 export function nextForecastHourUtc(): string {
@@ -91,6 +186,34 @@ export interface LegAtTime {
   index: number;
 }
 
+/** Great-circle bearing from a → b in degrees [0, 360). */
+export function segmentBearingDeg(a: LatLon, b: LatLon): number {
+  const lat1 = (a[0] * Math.PI) / 180;
+  const lat2 = (b[0] * Math.PI) / 180;
+  const dLon = ((b[1] - a[1]) * Math.PI) / 180;
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/** Bearing of the route segment the boat is on (matches the red line). */
+function routeSegmentHeading(legs: RouteLeg[], index: number): number | null {
+  if (legs.length < 2) {
+    const leg = legs[0];
+    return leg?.cog ?? leg?.heading ?? null;
+  }
+  const i0 = Math.max(0, Math.min(index, legs.length - 2));
+  const a = legs[i0].position;
+  const b = legs[i0 + 1].position;
+  const dlat = b[0] - a[0];
+  const dlon = b[1] - a[1];
+  if (Math.abs(dlat) < 1e-12 && Math.abs(dlon) < 1e-12) {
+    return legs[i0].cog ?? legs[i0].heading ?? null;
+  }
+  return segmentBearingDeg(a, b);
+}
+
 /** Interpolate boat state between route legs at an absolute UTC time. */
 export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
   if (!legs.length) return null;
@@ -99,7 +222,7 @@ export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
     const leg = legs[0];
     return {
       position: leg.position,
-      heading: leg.cog ?? leg.heading ?? null,
+      heading: routeSegmentHeading(legs, 0),
       leg,
       index: 0,
     };
@@ -109,7 +232,7 @@ export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
     const leg = legs[0];
     return {
       position: leg.position,
-      heading: leg.cog ?? leg.heading ?? null,
+      heading: routeSegmentHeading(legs, 0),
       leg,
       index: 0,
     };
@@ -119,7 +242,7 @@ export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
     const leg = legs[last];
     return {
       position: leg.position,
-      heading: leg.cog ?? leg.heading ?? null,
+      heading: routeSegmentHeading(legs, Math.max(0, last - 1)),
       leg,
       index: last,
     };
@@ -146,7 +269,11 @@ export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
     const d = ((y - x + 540) % 360) - 180;
     return (x + d * ft + 360) % 360;
   };
-  const heading = lerpAngle(a.cog ?? a.heading ?? 0, b.cog ?? b.heading ?? 0);
+  // Always point along the red route segment — never lerp heading across a tack.
+  const heading = routeSegmentHeading(legs, i0) ?? a.cog ?? a.heading ?? 0;
+  // Use the destination leg's speeds so the start node's sog=0 doesn't halve the display.
+  const bsp = b.bsp > 0 ? b.bsp : a.bsp;
+  const sog = b.sog > 0 ? b.sog : a.sog;
   const leg: RouteLeg = {
     ...a,
     t_utc: tUtc,
@@ -155,8 +282,8 @@ export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
     twd: lerpAngle(a.twd, b.twd),
     twa: lerp(a.twa, b.twa),
     heading,
-    bsp: lerp(a.bsp, b.bsp),
-    sog: lerp(a.sog, b.sog),
+    bsp,
+    sog,
     cog: heading,
     maneuver: "none",
   };
@@ -166,4 +293,48 @@ export function legAtTime(legs: RouteLeg[], tUtc: string): LegAtTime | null {
     leg,
     index: i0,
   };
+}
+
+/**
+ * Project a map click onto the nearest route segment and return the
+ * interpolated UTC time at that point (or null if the route has no legs).
+ */
+export function seekTimeAlongRoute(
+  legs: RouteLeg[],
+  lat: number,
+  lon: number,
+): string | null {
+  if (!legs.length) return null;
+  if (legs.length === 1) return legs[0].t_utc;
+
+  let bestDist = Infinity;
+  let bestTUtc = legs[0].t_utc;
+
+  for (let i = 0; i < legs.length - 1; i++) {
+    const a = legs[i];
+    const b = legs[i + 1];
+    const ax = a.position[1];
+    const ay = a.position[0];
+    const bx = b.position[1];
+    const by = b.position[0];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = 0;
+    if (len2 > 0) {
+      t = ((lon - ax) * dx + (lat - ay) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+    }
+    const px = ax + dx * t;
+    const py = ay + dy * t;
+    const dist = (lon - px) * (lon - px) + (lat - py) * (lat - py);
+    if (dist < bestDist) {
+      bestDist = dist;
+      const t0 = new Date(a.t_utc).getTime();
+      const t1 = new Date(b.t_utc).getTime();
+      bestTUtc = new Date(t0 + (t1 - t0) * t).toISOString();
+    }
+  }
+
+  return bestTUtc;
 }

@@ -1,5 +1,9 @@
 /**
- * Viewport span helpers (LOD tile pyramid removed — wind comes from /wind/area).
+ * Viewport helpers for browse wind.
+ *
+ * Client sends the raw viewport (+ zoom); the server pads once for the forcing
+ * cache and returns a zoom-tiered display window. Cache bookkeeping uses the
+ * returned series.bbox (not a client-side regionBounds pad).
  */
 
 import type { MapBounds } from "./mapOverlays";
@@ -57,24 +61,25 @@ export function bboxAreaDeg2(b: MapBounds): number {
 }
 
 /**
- * True when `next` is meaningfully smaller than `cached` (zoom-in).
- * Browse should force-replace rather than reuse the coarse large-region series.
+ * True when the cached display window is much larger than the current viewport
+ * AND a finer zoom tier is needed. Forcing cache is source-native (independent
+ * of zoom); this only triggers a display re-fetch for density.
  */
 export function regionNeedsDenserReplace(
   cached: MapBounds,
   next: MapBounds,
-  areaRatio = 0.5,
+  areaRatio = 0.25,
 ): boolean {
   const a = bboxAreaDeg2(cached);
   if (a <= 0) return false;
   return bboxAreaDeg2(next) / a < areaRatio;
 }
 
-/** Matches server REGION_PAD / REGION_SNAP in services/api/app/util/bbox.py. */
+/** @deprecated Server pads once; prefer sending the raw viewport. */
 export const REGION_PAD_DEG = 2.0;
 export const REGION_SNAP_DEG = 2.0;
 
-/** Expand + snap viewport to the server GRIB cache cell (pad 2°, snap 2°). */
+/** Expand + snap viewport (legacy helper; browse no longer pre-pads). */
 export function regionBounds(
   bbox: MapBounds,
   padDeg = REGION_PAD_DEG,

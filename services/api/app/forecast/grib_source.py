@@ -116,29 +116,100 @@ class GribSource(ABC):
 
 # --- Shared HTTP / GRIB helpers ---------------------------------------------
 
+_DEFAULT_STEP_WORKERS = 6
+
+
+def _short_url(url: str) -> str:
+    """Host + path for logs (omit query strings that may contain API keys)."""
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    p = urlparse(url)
+    return f"{p.netloc}{p.path}"
+
+
+def _http_error_kind(exc: BaseException) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return type(exc).__name__
+
 
 def http_get(
     url: str,
     *,
     headers: dict[str, str] | None = None,
     timeout: float = 120.0,
+    client: httpx.Client | None = None,
 ) -> bytes:
+    short = _short_url(url)
+    t0 = time.perf_counter()
     last_exc: Exception | None = None
-    for attempt in range(_MAX_RETRIES):
-        try:
-            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(timeout=timeout, follow_redirects=True)
+    assert client is not None
+    try:
+        for attempt in range(_MAX_RETRIES):
+            try:
+                if attempt == 0:
+                    logger.info("forecast GET %s (timeout=%.0fs)", short, timeout)
+                else:
+                    logger.warning(
+                        "forecast GET retry %d/%d %s after [%s] %s",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        short,
+                        _http_error_kind(last_exc) if last_exc else "?",
+                        last_exc,
+                    )
                 resp = client.get(url, headers=headers)
-            if resp.status_code in _RETRY_STATUSES and attempt < _MAX_RETRIES - 1:
-                time.sleep(1.5 * (2**attempt))
-                continue
-            resp.raise_for_status()
-            return resp.content
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            if attempt < _MAX_RETRIES - 1:
-                time.sleep(1.5 * (2**attempt))
-                continue
-            raise
+                if resp.status_code in _RETRY_STATUSES and attempt < _MAX_RETRIES - 1:
+                    logger.warning(
+                        "forecast GET %s HTTP %d (attempt %d/%d, backing off)",
+                        short,
+                        resp.status_code,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    time.sleep(1.5 * (2**attempt))
+                    continue
+                resp.raise_for_status()
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                logger.info(
+                    "forecast GET %s OK %d bytes %.0fms%s",
+                    short,
+                    len(resp.content),
+                    elapsed_ms,
+                    f" (attempt {attempt + 1})" if attempt > 0 else "",
+                )
+                return resp.content
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < _MAX_RETRIES - 1:
+                    logger.warning(
+                        "forecast GET %s [%s] %s (attempt %d/%d, backing off)",
+                        short,
+                        _http_error_kind(exc),
+                        exc,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    time.sleep(1.5 * (2**attempt))
+                    continue
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                logger.error(
+                    "forecast GET %s FAILED after %d attempts %.0fms: [%s] %s",
+                    short,
+                    _MAX_RETRIES,
+                    elapsed_ms,
+                    _http_error_kind(exc),
+                    exc,
+                )
+                raise
+    finally:
+        if owns_client:
+            client.close()
     if last_exc:
         raise last_exc
     raise RuntimeError(f"GET failed: {url}")
@@ -151,10 +222,63 @@ def http_get_range(
     *,
     headers: dict[str, str] | None = None,
     timeout: float = 120.0,
+    client: httpx.Client | None = None,
 ) -> bytes:
+    short = _short_url(url)
+    logger.info("forecast GET range %s bytes=%d-%d", short, start, end)
     hdrs = dict(headers or {})
     hdrs["Range"] = f"bytes={start}-{end}"
-    return http_get(url, headers=hdrs, timeout=timeout)
+    return http_get(url, headers=hdrs, timeout=timeout, client=client)
+
+
+def map_steps_parallel(
+    steps: list[int],
+    fetch_one,
+    *,
+    max_workers: int = _DEFAULT_STEP_WORKERS,
+) -> list[tuple[int, object]]:
+    """Run ``fetch_one(step)`` across steps with a bounded thread pool.
+
+    Returns ``[(step, result), ...]`` for successful steps, ordered by step.
+    Failed steps are logged and omitted (caller decides whether enough remain).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+
+    if not steps:
+        return []
+    if len(steps) == 1:
+        try:
+            return [(steps[0], fetch_one(steps[0]))]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "forecast step %s failed: [%s] %s",
+                steps[0],
+                _http_error_kind(exc),
+                exc,
+            )
+            return []
+
+    workers = max(1, min(max_workers, len(steps)))
+    out: dict[int, object] = {}
+    failed: list[tuple[int, str]] = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(fetch_one, s): s for s in steps}
+        for fut in as_completed(futs):
+            step = futs[fut]
+            try:
+                out[step] = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                failed.append((step, f"[{_http_error_kind(exc)}] {exc}"))
+                logger.warning("forecast step %s failed: [%s] %s", step, _http_error_kind(exc), exc)
+    if failed:
+        logger.warning(
+            "forecast parallel fetch: %d/%d steps failed (%s)",
+            len(failed),
+            len(steps),
+            ", ".join(f"f{step:03d}" for step, _ in failed[:6])
+            + ("…" if len(failed) > 6 else ""),
+        )
+    return [(s, out[s]) for s in sorted(out)]
 
 
 def bunzip2(raw: bytes) -> bytes:

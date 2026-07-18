@@ -67,6 +67,8 @@ export interface RouteLeg {
   sog: number;
   cog: number;
   maneuver: Maneuver;
+  depth_m?: number | null;
+  hazard_cost?: number | null;
 }
 
 export interface ModelRoute {
@@ -78,11 +80,53 @@ export interface ModelRoute {
   n_tacks: number;
   n_gybes: number;
   forecast_exhausted: boolean;
+  unreachable?: boolean;
+  warnings?: string[];
+  data_source?: Record<string, string>;
 }
 
 export interface RouteResponse {
   routes: ModelRoute[];
   warnings: string[];
+}
+
+/** SSE events from POST /route/stream */
+export type RouteProgressEvent =
+  | {
+      type: "stage";
+      key: "geo" | "wind" | "wind_extend" | string;
+      status: "start" | "done" | "error";
+      model_id?: string;
+      ms?: number;
+      n_times?: number;
+      extend_h?: number;
+    }
+  | {
+      type: "leg";
+      model_id: string;
+      index: number;
+      total: number;
+      name: string;
+      status: "start" | "done" | "error";
+      ms?: number;
+      termination?: string;
+      steps?: number;
+      wind_at_calls?: number;
+      blocked_calls?: number;
+      expansions?: number;
+    }
+  | { type: "warning"; message: string }
+  | { type: "error"; message: string }
+  | { type: "result"; routes: ModelRoute[]; warnings: string[] };
+
+export type RouteStepStatus = "pending" | "active" | "done" | "error";
+
+export interface RouteProgressStep {
+  id: string;
+  label: string;
+  status: RouteStepStatus;
+  ms?: number;
+  detail?: string;
 }
 
 export interface PolarCurve {

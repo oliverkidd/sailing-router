@@ -2,12 +2,17 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import InstrumentCluster from "@/components/InstrumentCluster";
-import type { RouteLeg } from "@/lib/types";
+import { colorForModel } from "@/lib/colors";
+import type { ModelRoute, RouteLeg } from "@/lib/types";
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
-/** Forecast time advanced per 1s of wall clock while playing (~20 min/s). */
+const FIVE_MIN_MS = 5 * 60 * 1000;
+/** Forecast time advanced per 1s of wall clock while playing at 1x (~20 min/s). */
 const PLAY_RATE_MS_PER_SEC = 20 * 60 * 1000;
+
+type PlaySpeed = 1 | 2 | 5;
+const SPEED_CYCLE: PlaySpeed[] = [1, 2, 5];
 
 function floorHourMs(iso: string): number {
   const d = new Date(iso);
@@ -39,18 +44,21 @@ function formatDayHour(
 }
 
 const btnStyle: CSSProperties = {
-  width: 32,
+  minWidth: 36,
   height: 32,
+  padding: "0 8px",
   borderRadius: 8,
   border: "1px solid var(--border)",
   background: "transparent",
   color: "var(--text)",
   cursor: "pointer",
-  fontSize: 16,
+  fontSize: 11,
+  fontWeight: 600,
   lineHeight: 1,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
+  fontVariantNumeric: "tabular-nums",
 };
 
 export default function TimeScrubber({
@@ -62,6 +70,11 @@ export default function TimeScrubber({
   routeActive = false,
   leg = null,
   playUntilUtc = null,
+  distanceNm = 0,
+  routes = [],
+  activeModelId = "",
+  modelLabels = {},
+  onActiveModel,
 }: {
   overlayTimeUtc: string;
   onTime: (iso: string) => void;
@@ -72,12 +85,22 @@ export default function TimeScrubber({
   leg?: RouteLeg | null;
   /** When set, autoplay stops at this time (e.g. route ETA). */
   playUntilUtc?: string | null;
+  distanceNm?: number;
+  /** Computed routes — when >1, show forecast tabs above the scrubber. */
+  routes?: ModelRoute[];
+  activeModelId?: string;
+  modelLabels?: Record<string, string>;
+  onActiveModel?: (id: string) => void;
 }) {
   const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState<PlaySpeed>(1);
+  const [hasPlayed, setHasPlayed] = useState(false);
   const onTimeRef = useRef(onTime);
   onTimeRef.current = onTime;
   const curMsRef = useRef(0);
   const playEndRef = useRef(0);
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
 
   const startMs = routeActive
     ? new Date(horizonStartUtc).getTime()
@@ -99,8 +122,14 @@ export default function TimeScrubber({
   playEndRef.current = playEndMs;
   const atPlayEnd = curMs >= playEndMs;
 
+  const showRouteTabs = routeActive && routes.length > 1 && !!onActiveModel;
+
   useEffect(() => {
-    if (!routeActive) setPlaying(false);
+    if (!routeActive) {
+      setPlaying(false);
+      setHasPlayed(false);
+      setSpeed(1);
+    }
   }, [routeActive]);
 
   useEffect(() => {
@@ -117,7 +146,10 @@ export default function TimeScrubber({
     const tick = (now: number) => {
       const dt = Math.min(0.064, (now - last) / 1000);
       last = now;
-      playhead = Math.min(playEndRef.current, playhead + PLAY_RATE_MS_PER_SEC * dt);
+      playhead = Math.min(
+        playEndRef.current,
+        playhead + PLAY_RATE_MS_PER_SEC * speedRef.current * dt,
+      );
       onTimeRef.current(toIso(playhead));
       if (playhead >= playEndRef.current) {
         setPlaying(false);
@@ -136,6 +168,43 @@ export default function TimeScrubber({
     onTime(toIso(next));
   };
 
+  const stepRef = useRef(step);
+  stepRef.current = step;
+
+  useEffect(() => {
+    if (!routeActive) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
+        return;
+      }
+      e.preventDefault();
+      const delta = FIVE_MIN_MS * speedRef.current;
+      stepRef.current(e.key === "ArrowLeft" ? -delta : delta);
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [routeActive]);
+
+  const cycleSpeed = () => {
+    setSpeed((s) => {
+      const i = SPEED_CYCLE.indexOf(s);
+      return SPEED_CYCLE[(i + 1) % SPEED_CYCLE.length];
+    });
+  };
+
+  const togglePlay = () => {
+    setPlaying((p) => {
+      const next = !p;
+      if (next) setHasPlayed(true);
+      return next;
+    });
+  };
+
   return (
     <div
       className={[
@@ -149,6 +218,36 @@ export default function TimeScrubber({
       aria-label="Forecast time"
       aria-busy={loading || undefined}
     >
+      {showRouteTabs && (
+        <div className="time-nav-tabs" role="tablist" aria-label="Forecast model">
+          {routes.map((r) => {
+            const active = r.model_id === activeModelId;
+            const color = colorForModel(r.model_id);
+            const label = modelLabels[r.model_id] ?? r.model_id;
+            return (
+              <button
+                key={r.model_id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`time-nav-tab${active ? " active" : ""}`}
+                style={{
+                  borderColor: color,
+                  background: active ? color : "transparent",
+                  color: active ? "#04231f" : "var(--text)",
+                }}
+                onClick={() => {
+                  setPlaying(false);
+                  onActiveModel?.(r.model_id);
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="time-nav-row">
         <button
           type="button"
@@ -156,9 +255,9 @@ export default function TimeScrubber({
           onClick={() => step(-DAY_MS)}
           disabled={atStart}
           aria-label="Previous day"
-          title="−1 day"
+          title="−24 hours"
         >
-          «
+          - 24h
         </button>
         <button
           type="button"
@@ -168,30 +267,42 @@ export default function TimeScrubber({
           aria-label="Previous hour"
           title="−1 hour"
         >
-          ‹
+          - 1h
         </button>
 
         <div className="time-nav-label">
-          <div className="time-nav-hour">
+          <div className="time-nav-datetime">
             {loading && <span className="time-nav-spin" aria-hidden />}
-            {hour}
+            {loading ? "Loading forecast…" : `${hour} · ${day}`}
           </div>
-          <div className="time-nav-day">{loading ? "Loading forecast…" : day}</div>
           {routeActive && (
-            <button
-              type="button"
-              className="time-nav-play"
-              onClick={() => setPlaying((p) => !p)}
-              disabled={atPlayEnd && !playing}
-              aria-label={playing ? "Pause route playback" : "Play route playback"}
-              title={playing ? "Pause" : "Play"}
-            >
-              {playing ? (
-                <span className="time-nav-pause-icon" aria-hidden />
-              ) : (
-                <span className="time-nav-play-icon" aria-hidden />
+            <div className="time-nav-play-row">
+              <button
+                type="button"
+                className="time-nav-play"
+                onClick={togglePlay}
+                disabled={atPlayEnd && !playing}
+                aria-label={playing ? "Pause route playback" : "Play route playback"}
+                title={playing ? "Pause" : "Play"}
+              >
+                {playing ? (
+                  <span className="time-nav-pause-icon" aria-hidden />
+                ) : (
+                  <span className="time-nav-play-icon" aria-hidden />
+                )}
+              </button>
+              {hasPlayed && (
+                <button
+                  type="button"
+                  className="time-nav-speed"
+                  onClick={cycleSpeed}
+                  aria-label={`Playback speed ${speed}x`}
+                  title="Cycle playback speed"
+                >
+                  {speed}x
+                </button>
               )}
-            </button>
+            </div>
           )}
         </div>
 
@@ -203,7 +314,7 @@ export default function TimeScrubber({
           aria-label="Next hour"
           title="+1 hour"
         >
-          ›
+          + 1h
         </button>
         <button
           type="button"
@@ -211,13 +322,13 @@ export default function TimeScrubber({
           onClick={() => step(DAY_MS)}
           disabled={atEnd}
           aria-label="Next day"
-          title="+1 day"
+          title="+24 hours"
         >
-          »
+          + 24h
         </button>
       </div>
 
-      {leg && <InstrumentCluster leg={leg} embedded />}
+      {leg && <InstrumentCluster leg={leg} embedded distanceNm={distanceNm} />}
     </div>
   );
 }

@@ -39,8 +39,8 @@ def prepare_bbox(course: Course) -> BBox:
 
 def _geo_cached(bbox: BBox) -> bool:
     key = bbox.key()
-    return (GEO_CACHE_DIR / f"{key}_land.geojson").exists() and (
-        GEO_CACHE_DIR / f"{key}_depth.npz"
+    return (GEO_CACHE_DIR / f"{key}_land_chart.geojson").exists() and (
+        GEO_CACHE_DIR / f"{key}_depth_chart.npz"
     ).exists()
 
 

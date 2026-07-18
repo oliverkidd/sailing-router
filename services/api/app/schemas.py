@@ -89,6 +89,8 @@ class RouteLeg(BaseModel):
     sog: float
     cog: float
     maneuver: Maneuver = "none"
+    depth_m: float | None = None
+    hazard_cost: float | None = None
 
 
 class ModelRoute(BaseModel):
@@ -100,6 +102,9 @@ class ModelRoute(BaseModel):
     n_tacks: int
     n_gybes: int
     forecast_exhausted: bool
+    unreachable: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    data_source: dict[str, str] = Field(default_factory=dict)
 
 
 class RouteResponse(BaseModel):
@@ -135,6 +140,21 @@ class ElevationResponse(BaseModel):
     # depth is only known as shallower than this chart contour.
     depth_lt_m: float | None = None
     on_land: bool | None = None
+    # True when a loaded DEM GeoTIFF footprint contains this point (may still
+    # return null elevation over ocean nodata inside the mosaic).
+    dem_available: bool = False
+
+
+class DemFootprint(BaseModel):
+    name: str
+    lon_min: float
+    lat_min: float
+    lon_max: float
+    lat_max: float
+
+
+class DemCoverageResponse(BaseModel):
+    footprints: list[DemFootprint]
 
 
 class CoursePrepareRequest(BaseModel):

@@ -18,23 +18,47 @@ function sh(cmd, args, opts = {}) {
   }
 }
 
+function pythonVersion(cmd) {
+  const r = spawnSync(cmd, ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"], {
+    encoding: "utf8",
+  });
+  if (r.status !== 0) return null;
+  const [major, minor] = String(r.stdout).trim().split(".").map(Number);
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) return null;
+  return { major, minor };
+}
+
 function findPython() {
-  for (const c of ["python3", "python3.12", "python3.11"]) {
-    const r = spawnSync(c, ["--version"], { stdio: "ignore" });
-    if (r.status === 0) return c;
+  // Prefer versioned binaries first — macOS /usr/bin/python3 is often too old (3.9).
+  for (const c of ["python3.13", "python3.12", "python3.11", "python3"]) {
+    const v = pythonVersion(c);
+    if (v && (v.major > 3 || (v.major === 3 && v.minor >= 11))) return c;
   }
-  console.error("[setup] Python 3.11+ not found. Install Python 3 and retry.");
+  console.error(
+    "[setup] Python 3.11+ not found. Install it (e.g. `brew install python@3.12`) and retry.",
+  );
   process.exit(1);
 }
 
+function venvIsOk() {
+  if (!existsSync(venvPy)) return false;
+  const v = pythonVersion(venvPy);
+  return Boolean(v && (v.major > 3 || (v.major === 3 && v.minor >= 11)));
+}
+
 export function ensureBackend() {
-  if (!existsSync(venvPy)) {
-    const py = findPython();
-    console.log("[setup] creating Python venv + installing backend deps (first run)…");
-    sh(py, ["-m", "venv", ".venv"], { cwd: apiDir });
-    sh(venvPy, ["-m", "pip", "install", "-q", "--upgrade", "pip"], { cwd: apiDir });
-    sh(venvPy, ["-m", "pip", "install", "-q", "-e", ".[dev]"], { cwd: apiDir });
+  if (venvIsOk()) return;
+
+  if (existsSync(venvPy)) {
+    console.log("[setup] existing .venv uses Python <3.11 — recreating…");
+    sh("rm", ["-rf", ".venv"], { cwd: apiDir });
   }
+
+  const py = findPython();
+  console.log(`[setup] creating Python venv with ${py} + installing backend deps…`);
+  sh(py, ["-m", "venv", ".venv"], { cwd: apiDir });
+  sh(venvPy, ["-m", "pip", "install", "-q", "--upgrade", "pip"], { cwd: apiDir });
+  sh(venvPy, ["-m", "pip", "install", "-q", "-e", ".[dev]"], { cwd: apiDir });
 }
 
 export function ensureNode() {

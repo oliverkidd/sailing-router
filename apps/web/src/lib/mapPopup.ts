@@ -7,6 +7,7 @@ export interface PointInspect {
   depth_m?: number | null;
   depth_lt_m?: number | null;
   on_land?: boolean | null;
+  dem_available?: boolean | null;
   tws?: number | null;
   twd?: number | null;
 }
@@ -26,6 +27,11 @@ function fmtNum(n: number | null | undefined, digits = 1): string {
 function terrainGauge(data: PointInspect): { label: string; value: string; unit: string } {
   const onLand = data.on_land === true;
   if (onLand) {
+    if (data.elevation_m == null || Number.isNaN(data.elevation_m)) {
+      // Land polygon without DEM height — coverage gap, not sea level.
+      const hint = data.dem_available === false || data.dem_available == null ? " (no DEM)" : "";
+      return { label: "Elev", value: `—${hint}`, unit: "m" };
+    }
     return { label: "Elev", value: fmtNum(data.elevation_m, 0), unit: "m" };
   }
   if (data.depth_m != null) {

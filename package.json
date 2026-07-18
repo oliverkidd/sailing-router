@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "setup": "node scripts/setup.mjs",
+    "build-data": "node scripts/build-data.mjs",
     "dev:web": "npm run dev --workspace apps/web",
     "dev:docker": "docker compose up --build",
     "build": "npm run build --workspace apps/web",

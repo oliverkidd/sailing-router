@@ -11,8 +11,6 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-import httpx
-
 from ..metocean import WindField
 from ..schemas import BBox
 from .grib_source import (
@@ -21,6 +19,7 @@ from .grib_source import (
     assemble_windfield,
     grib_bytes_to_component,
     http_get,
+    map_steps_parallel,
     register,
 )
 
@@ -61,27 +60,25 @@ class GemSource(GribSource):
     def fetch(self, bbox: BBox, cycle: datetime, steps: list[int]) -> WindField:
         steps = list(steps) or [0]
 
-        per_step: list[tuple[float, object, object]] = []
-        lats = lons = None
-        for step in steps:
+        def fetch_one(step: int):
             u_url, v_url = _gem_urls(cycle, step)
-            try:
-                u_raw = http_get(u_url)
-                v_raw = http_get(v_url)
-                la, lo, u2d, te = grib_bytes_to_component(u_raw, which="u")
-                _, _, v2d, _ = grib_bytes_to_component(v_raw, which="v")
-                if lats is None:
-                    lats, lons = la, lo
-                per_step.append((te, u2d, v2d))
-            except httpx.HTTPStatusError as exc:
-                # Cycle/path missing — don't hammer remaining steps.
-                logger.warning("GEM step %s HTTP %s — aborting cycle", step, exc.response.status_code)
-                break
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("GEM step %s failed: %s", step, exc)
-                if not per_step:
-                    break
-                continue
+            u_raw = http_get(u_url)
+            v_raw = http_get(v_url)
+            la, lo, u2d, te = grib_bytes_to_component(u_raw, which="u")
+            _, _, v2d, _ = grib_bytes_to_component(v_raw, which="v")
+            return te, u2d, v2d, la, lo
+
+        ordered = map_steps_parallel(steps, fetch_one)
+        if not ordered:
+            raise RuntimeError(f"GEM: no steps fetched for cycle {cycle}")
+
+        lats = lons = None
+        per_step: list[tuple[float, object, object]] = []
+        for _step, payload in ordered:
+            te, u2d, v2d, la, lo = payload  # type: ignore[misc]
+            if lats is None:
+                lats, lons = la, lo
+            per_step.append((te, u2d, v2d))
 
         if not per_step or lats is None or lons is None:
             raise RuntimeError(f"GEM: no steps fetched for cycle {cycle}")

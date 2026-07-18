@@ -8,8 +8,10 @@ import numpy as np
 
 from ..schemas import BBox
 
-# ~500 m at mid-latitudes — store + query resolution (canonical grid).
+# Legacy ~500 m default — forcing cache prefers model-native resolution_deg.
 CANON_RES_DEG = 0.0045
+# Modelling substrate for terrain-response library (~200 m).
+WIND_CANON_RES_DEG = 0.0018
 # Alias kept for display-budget callers.
 TARGET_RES_DEG = CANON_RES_DEG
 MAX_DISPLAY_PTS = 256 * 256
@@ -51,16 +53,20 @@ def region_bbox(
     )
 
 
-def canonical_grid(region: BBox) -> tuple[np.ndarray, np.ndarray]:
-    """Deterministic ascending (lats, lons) on a GLOBAL CANON_RES_DEG lattice.
+def canonical_grid(
+    region: BBox,
+    res_deg: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Deterministic ascending (lats, lons) on a GLOBAL lattice at ``res_deg``.
 
-    Snapping to the global lattice (not to region.lat_min) guarantees identical
-    axes whenever the same region is requested again → concat_time + terrain stay
-    aligned. If the region is too large for MAX_CANON_PTS at 500 m, the spacing
-    is doubled (still a multiple of CANON_RES_DEG) until it fits — deterministic
-    for a given region.
+    Defaults to CANON_RES_DEG. Forcing cache should pass the model's native
+    ``resolution_deg`` so one stable grid per region+model serves display and
+    routing. Snapping to the global lattice guarantees identical axes on
+    repeat requests. If the region is too large for MAX_CANON_PTS, spacing is
+    doubled (still a multiple of the base res) until it fits.
     """
-    res = CANON_RES_DEG
+    base = float(res_deg) if res_deg is not None and res_deg > 0 else CANON_RES_DEG
+    res = base
     while True:
         lat0 = math.floor(region.lat_min / res) * res
         lon0 = math.floor(region.lon_min / res) * res

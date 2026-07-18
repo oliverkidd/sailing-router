@@ -23,3 +23,5 @@ services/api/.venv/
 # Logs
 *.log
 .debug/
+apps/web/public/geo/terrain/
+apps/web/public/geo/dem_coverage.geojson

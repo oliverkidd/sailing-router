@@ -1,7 +1,7 @@
 "use client";
 
 import type { Course, ModelPreset } from "@/lib/types";
-import { courseIsReady } from "@/lib/mapOverlays";
+import { courseDistanceNm, courseIsReady } from "@/lib/mapOverlays";
 
 function fmtCoord(lat: number, lon: number): string {
   const ns = lat >= 0 ? "N" : "S";
@@ -29,19 +29,49 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+export function formatSummaryClipboard(
+  course: Course,
+  selected: Set<string>,
+  models: ModelPreset[],
+): string {
+  const ready = courseIsReady(course);
+  if (!ready) return "Course not ready — set start and finish.";
+  const forecastLabels =
+    selected.size === 0
+      ? "None selected"
+      : Array.from(selected)
+          .map((id) => models.find((m) => m.id === id)?.label ?? id)
+          .join(", ");
+  const marks =
+    course.marks.length === 0
+      ? "None"
+      : `${course.marks.length} mark${course.marks.length === 1 ? "" : "s"}`;
+  const crow = courseDistanceNm(course);
+  return [
+    `Start: ${fmtCoord(course.start[0], course.start[1])}`,
+    `Finish: ${fmtCoord(course.finish[0], course.finish[1])}`,
+    `Marks: ${marks}`,
+    `Crow flies: ${crow.toFixed(1)} nm`,
+    `Depart: ${fmtDepart(course.depart_utc)}`,
+    `Forecasts: ${forecastLabels}`,
+  ].join("\n");
+}
+
 export default function RouteReview({
   course,
   selected,
   models,
   running,
   prepState,
+  message,
   onRun,
 }: {
   course: Course;
   selected: Set<string>;
   models: ModelPreset[];
   running: boolean;
-  prepState: "idle" | "preparing" | "ready" | "error";
+  prepState: "idle" | "preparing" | "ready" | "error" | "warning";
+  message?: string;
   onRun: () => void;
 }) {
   const ready = courseIsReady(course);
@@ -52,6 +82,7 @@ export default function RouteReview({
       : Array.from(selected)
           .map((id) => models.find((m) => m.id === id)?.label ?? id)
           .join(", ");
+  const crowNm = ready ? courseDistanceNm(course) : 0;
 
   return (
     <div className="route-review">
@@ -69,9 +100,14 @@ export default function RouteReview({
                 : `${course.marks.length} mark${course.marks.length === 1 ? "" : "s"}`
             }
           />
+          <Row label="Crow flies" value={`${crowNm.toFixed(1)} nm`} />
           <Row label="Depart" value={fmtDepart(course.depart_utc)} />
           <Row label="Forecasts" value={forecastLabels} />
         </>
+      )}
+
+      {prepState === "error" && message && !running && (
+        <div className="route-review-error">{message}</div>
       )}
 
       <button

@@ -14,6 +14,7 @@ from .grib_source import (
     assemble_windfield,
     grib_bytes_to_uv,
     http_get,
+    map_steps_parallel,
     register,
 )
 
@@ -43,10 +44,7 @@ class MeteoFranceSource(GribSource):
         headers = _mf_headers()
         stamp = cycle.strftime("%Y-%m-%dT%H:00:00Z")
 
-        per_step: list[tuple[float, object, object]] = []
-        lats = lons = None
-        for step in steps:
-            # MF WCS-style GRIB download for SP1 (surface) packages.
+        def fetch_one(step: int):
             url = (
                 f"{_MF_BASE}/{self.model_path}/1.0/wcs/"
                 f"{self.package}"
@@ -58,7 +56,6 @@ class MeteoFranceSource(GribSource):
                 f"&subset=long({bbox.lon_min},{bbox.lon_max})"
                 f"&subset=forecast_hour({step})"
             )
-            # Prefer dedicated U/V coverage IDs when available.
             u_url = url.replace(
                 "TEMPERATURE__SPECIFIC_HEIGHT_LEVEL_ABOVE_GROUND",
                 "U_COMPONENT_OF_WIND__SPECIFIC_HEIGHT_LEVEL_ABOVE_GROUND",
@@ -67,17 +64,23 @@ class MeteoFranceSource(GribSource):
                 "TEMPERATURE__SPECIFIC_HEIGHT_LEVEL_ABOVE_GROUND",
                 "V_COMPONENT_OF_WIND__SPECIFIC_HEIGHT_LEVEL_ABOVE_GROUND",
             )
-            try:
-                u_raw = http_get(u_url, headers=headers)
-                v_raw = http_get(v_url, headers=headers)
-                la, lo, u2d, _, te = grib_bytes_to_uv(u_raw)
-                _, _, _, v2d, _ = grib_bytes_to_uv(v_raw)
-                if lats is None:
-                    lats, lons = la, lo
-                per_step.append((te, u2d, v2d))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("%s step %s failed: %s", self.spec.model_id, step, exc)
-                continue
+            u_raw = http_get(u_url, headers=headers)
+            v_raw = http_get(v_url, headers=headers)
+            la, lo, u2d, _, te = grib_bytes_to_uv(u_raw)
+            _, _, _, v2d, _ = grib_bytes_to_uv(v_raw)
+            return te, u2d, v2d, la, lo
+
+        ordered = map_steps_parallel(steps, fetch_one)
+        if not ordered:
+            raise RuntimeError(f"{self.spec.model_id}: no GRIB steps fetched")
+
+        lats = lons = None
+        per_step: list[tuple[float, object, object]] = []
+        for _step, payload in ordered:
+            te, u2d, v2d, la, lo = payload  # type: ignore[misc]
+            if lats is None:
+                lats, lons = la, lo
+            per_step.append((te, u2d, v2d))
 
         if not per_step or lats is None or lons is None:
             raise RuntimeError(f"{self.spec.model_id}: no GRIB steps fetched")
