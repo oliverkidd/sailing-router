@@ -69,7 +69,7 @@ def _prefetch_model(
         for chunk_start, chunk_end in iter_hour_chunks(depart, end):
             t_chunk = time.perf_counter()
             field = ensure_wind_window(
-                model_id, bbox, start=chunk_start, end=chunk_end
+                model_id, bbox, start=chunk_start, end=chunk_end, pad_region=False
             )
             logger.info(
                 "prepare %s chunk %s→%s %.0fms",

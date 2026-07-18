@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,60 +90,25 @@ class TerrainLibrary:
             return TerrainResponse()
 
         s0, s1, ws = _sector_weights(wind_dir_from_deg)
-        d0, d1 = 0, 1
         wd = float(np.clip(day_frac, 0.0, 1.0))
         wn = 1.0 - wd
+        i, j, fx, fy = self._indices(lat, lon)
 
-        su = (
-            wd
-            * (
-                ws * self._bilinear(self.speedup[s0, d0], lat, lon)
-                + (1 - ws) * self._bilinear(self.speedup[s1, d0], lat, lon)
-            )
-            + wn
-            * (
-                ws * self._bilinear(self.speedup[s0, d1], lat, lon)
-                + (1 - ws) * self._bilinear(self.speedup[s1, d1], lat, lon)
-            )
-        )
-        de = (
-            wd
-            * (
-                ws * self._bilinear(self.deflection_deg[s0, d0], lat, lon)
-                + (1 - ws) * self._bilinear(self.deflection_deg[s1, d0], lat, lon)
-            )
-            + wn
-            * (
-                ws * self._bilinear(self.deflection_deg[s0, d1], lat, lon)
-                + (1 - ws) * self._bilinear(self.deflection_deg[s1, d1], lat, lon)
-            )
-        )
+        def blend(cube: np.ndarray) -> float:
+            c00 = self._bilinear_at(cube[s0, 0], i, j, fx, fy)
+            c10 = self._bilinear_at(cube[s1, 0], i, j, fx, fy)
+            c01 = self._bilinear_at(cube[s0, 1], i, j, fx, fy)
+            c11 = self._bilinear_at(cube[s1, 1], i, j, fx, fy)
+            day = ws * c00 + (1 - ws) * c10
+            night = ws * c01 + (1 - ws) * c11
+            return wd * day + wn * night
+
+        su = blend(self.speedup)
+        de = blend(self.deflection_deg)
         ku = kv = 0.0
         if self.katabatic_u is not None and self.katabatic_v is not None:
-            ku = (
-                wd
-                * (
-                    ws * self._bilinear(self.katabatic_u[s0, d0], lat, lon)
-                    + (1 - ws) * self._bilinear(self.katabatic_u[s1, d0], lat, lon)
-                )
-                + wn
-                * (
-                    ws * self._bilinear(self.katabatic_u[s0, d1], lat, lon)
-                    + (1 - ws) * self._bilinear(self.katabatic_u[s1, d1], lat, lon)
-                )
-            )
-            kv = (
-                wd
-                * (
-                    ws * self._bilinear(self.katabatic_v[s0, d0], lat, lon)
-                    + (1 - ws) * self._bilinear(self.katabatic_v[s1, d0], lat, lon)
-                )
-                + wn
-                * (
-                    ws * self._bilinear(self.katabatic_v[s0, d1], lat, lon)
-                    + (1 - ws) * self._bilinear(self.katabatic_v[s1, d1], lat, lon)
-                )
-            )
+            ku = blend(self.katabatic_u)
+            kv = blend(self.katabatic_v)
         return TerrainResponse(
             speedup=float(su),
             deflection_deg=float(de),
@@ -148,7 +116,7 @@ class TerrainLibrary:
             katabatic_v=float(kv),
         )
 
-    def _bilinear(self, arr2d: np.ndarray, lat: float, lon: float) -> float:
+    def _indices(self, lat: float, lon: float) -> tuple[int, int, float, float]:
         la = float(np.clip(lat, self.lats[0], self.lats[-1]))
         lo = float(np.clip(lon, self.lons[0], self.lons[-1]))
         i = int(np.clip(np.searchsorted(self.lats, la) - 1, 0, self.lats.size - 2))
@@ -157,9 +125,18 @@ class TerrainLibrary:
         lo0, lo1 = float(self.lons[j]), float(self.lons[j + 1])
         fy = 0.0 if la1 == la0 else (la - la0) / (la1 - la0)
         fx = 0.0 if lo1 == lo0 else (lo - lo0) / (lo1 - lo0)
+        return i, j, fx, fy
+
+    def _bilinear_at(
+        self, arr2d: np.ndarray, i: int, j: int, fx: float, fy: float
+    ) -> float:
         v0 = float(arr2d[i, j]) * (1 - fx) + float(arr2d[i, j + 1]) * fx
         v1 = float(arr2d[i + 1, j]) * (1 - fx) + float(arr2d[i + 1, j + 1]) * fx
         return v0 * (1 - fy) + v1 * fy
+
+    def _bilinear(self, arr2d: np.ndarray, lat: float, lon: float) -> float:
+        i, j, fx, fy = self._indices(lat, lon)
+        return self._bilinear_at(arr2d, i, j, fx, fy)
 
 
 def _sector_weights(wind_dir_from_deg: float) -> tuple[int, int, float]:
@@ -177,29 +154,67 @@ def library_available() -> bool:
     return REGION_LIBRARY.exists() or any(TERRAIN_DIR.glob("tile_*/library.zarr"))
 
 
+# Process-local LRU of loaded TerrainLibrary windows.
+_LIB_LRU_MAX = 6
+_LIB_TTL_S = 1800
+_lib_lru: OrderedDict[str, tuple[float, TerrainLibrary]] = OrderedDict()
+_lib_guard = threading.Lock()
+
+
+def _lib_cache_get(key: str) -> TerrainLibrary | None:
+    with _lib_guard:
+        hit = _lib_lru.get(key)
+        if hit is None:
+            return None
+        ts, lib = hit
+        if time.time() - ts > _LIB_TTL_S:
+            del _lib_lru[key]
+            return None
+        _lib_lru.move_to_end(key)
+        return lib
+
+
+def _lib_cache_put(key: str, lib: TerrainLibrary) -> None:
+    with _lib_guard:
+        _lib_lru[key] = (time.time(), lib)
+        _lib_lru.move_to_end(key)
+        while len(_lib_lru) > _LIB_LRU_MAX:
+            _lib_lru.popitem(last=False)
+
+
 def load_library_for_bbox(bbox: BBox, *, overview: int = 1) -> TerrainLibrary | None:
     """Load (or window) the terrain library covering bbox.
 
     ``overview`` is a power-of-2 downsample factor (1 = native 200 m).
     Returns None when no library has been baked offline.
     """
+    cache_key = f"{bbox.key()}|o{max(1, int(overview))}|{LIBRARY_VERSION}"
+    hit = _lib_cache_get(cache_key)
+    if hit is not None:
+        return hit
+
+    lib: TerrainLibrary | None = None
     if REGION_LIBRARY.exists():
         try:
-            return _load_zarr_window(REGION_LIBRARY, bbox, overview=overview)
+            lib = _load_zarr_window(REGION_LIBRARY, bbox, overview=overview)
         except Exception as exc:  # noqa: BLE001
             logger.warning("terrain library load failed: %s", exc)
-            return None
-    # Tile mosaic fallback: merge covering tiles (simple first-hit for now).
-    tiles = sorted(TERRAIN_DIR.glob("tile_*/library.zarr"))
-    if not tiles:
-        return None
-    for tile in tiles:
-        try:
-            lib = _load_zarr_window(tile, bbox, overview=overview)
-            if lib is not None and lib.available:
-                return lib
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("skip terrain tile %s: %s", tile, exc)
+            lib = None
+    else:
+        tiles = sorted(TERRAIN_DIR.glob("tile_*/library.zarr"))
+        for tile in tiles:
+            try:
+                candidate = _load_zarr_window(tile, bbox, overview=overview)
+                if candidate is not None and candidate.available:
+                    lib = candidate
+                    break
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("skip terrain tile %s: %s", tile, exc)
+
+    if lib is not None and lib.available:
+        # Prefer real library version in cache key on next hit via stored attrs.
+        _lib_cache_put(cache_key, lib)
+        return lib
     return None
 
 

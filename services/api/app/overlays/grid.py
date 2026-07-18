@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime
 
 import numpy as np
@@ -23,12 +22,16 @@ def display_series_payload(
     """Interpolate field onto an nlat×nlon target grid for times in [start, end].
 
     Emits the WindSeries JSON shape used by the frontend.
+    When ``field`` is already on the target axes, skips RegularGridInterpolator.
     """
     lats = np.linspace(bbox.lat_min, bbox.lat_max, nlat)
     lons = np.linspace(bbox.lon_min, bbox.lon_max, nlon)
-    # Clip query points into the field domain for interpolator.
-    la_lo, la_hi = float(field.lats[0]), float(field.lats[-1])
-    lo_lo, lo_hi = float(field.lons[0]), float(field.lons[-1])
+    axes_match = (
+        field.lats.size == nlat
+        and field.lons.size == nlon
+        and np.allclose(field.lats, lats, rtol=0.0, atol=1e-9)
+        and np.allclose(field.lons, lons, rtol=0.0, atol=1e-9)
+    )
 
     start_epoch = start.timestamp() if start is not None else float(field.times[0])
     end_epoch = end.timestamp() if end is not None else float(field.times[-1])
@@ -38,11 +41,13 @@ def display_series_payload(
     v_series: list[list[float]] = []
     speed_series: list[list[float]] = []
 
-    # Build query mesh (lat, lon) for interpolator.
-    query_lat = np.clip(lats, la_lo, la_hi)
-    query_lon = np.clip(lons, lo_lo, lo_hi)
-    qq_lat, qq_lon = np.meshgrid(query_lat, query_lon, indexing="ij")
-    pts = np.column_stack([qq_lat.ravel(), qq_lon.ravel()])
+    if not axes_match:
+        la_lo, la_hi = float(field.lats[0]), float(field.lats[-1])
+        lo_lo, lo_hi = float(field.lons[0]), float(field.lons[-1])
+        query_lat = np.clip(lats, la_lo, la_hi)
+        query_lon = np.clip(lons, lo_lo, lo_hi)
+        qq_lat, qq_lon = np.meshgrid(query_lat, query_lon, indexing="ij")
+        pts = np.column_stack([qq_lat.ravel(), qq_lon.ravel()])
 
     for te in field.times:
         te_f = float(te)
@@ -50,7 +55,6 @@ def display_series_payload(
             continue
         k = int(np.searchsorted(field.times, te_f))
         k = min(max(k, 0), field.times.size - 1)
-        # Prefer exact or nearest index for discrete hourly emit.
         if abs(float(field.times[k]) - te_f) > 1 and k > 0:
             if abs(float(field.times[k - 1]) - te_f) < abs(float(field.times[k]) - te_f):
                 k = k - 1
@@ -58,20 +62,24 @@ def display_series_payload(
         t = datetime.fromtimestamp(te_f, tz=UTC)
         times_iso.append(t.isoformat().replace("+00:00", "Z"))
 
-        u_interp = RegularGridInterpolator(
-            (field.lats, field.lons),
-            field.u10[k],
-            bounds_error=False,
-            fill_value=0.0,
-        )
-        v_interp = RegularGridInterpolator(
-            (field.lats, field.lons),
-            field.v10[k],
-            bounds_error=False,
-            fill_value=0.0,
-        )
-        u_flat = u_interp(pts).reshape(nlat, nlon).astype(float)
-        v_flat = v_interp(pts).reshape(nlat, nlon).astype(float)
+        if axes_match:
+            u_flat = field.u10[k].astype(float)
+            v_flat = field.v10[k].astype(float)
+        else:
+            u_interp = RegularGridInterpolator(
+                (field.lats, field.lons),
+                field.u10[k],
+                bounds_error=False,
+                fill_value=0.0,
+            )
+            v_interp = RegularGridInterpolator(
+                (field.lats, field.lons),
+                field.v10[k],
+                bounds_error=False,
+                fill_value=0.0,
+            )
+            u_flat = u_interp(pts).reshape(nlat, nlon).astype(float)
+            v_flat = v_interp(pts).reshape(nlat, nlon).astype(float)
         speed = np.hypot(u_flat, v_flat) * MS_TO_KN
 
         u_series.append([round(float(x), 4) for x in u_flat.ravel()])

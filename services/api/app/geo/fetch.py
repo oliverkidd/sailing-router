@@ -448,9 +448,16 @@ def depth_lt_at_point(
     *,
     on_land: bool | None,
     depth_m: float | None = None,
+    elevation_m: float | None = None,
 ) -> float | None:
-    """When depth is unknown but the click is wet inside the chart mosaic, return <N m."""
+    """When depth is unknown but the click is wet inside the chart mosaic, return <N m.
+
+    Never claims shallow water when DEM already sampled a non-negative elevation
+    (dry / land height) — that is the 3D-terrain vs Depth <2 m mismatch.
+    """
     if depth_m is not None or on_land is True:
+        return None
+    if elevation_m is not None and elevation_m >= 0:
         return None
     if not _in_region_depth_bounds(lat, lon):
         return None
@@ -458,11 +465,21 @@ def depth_lt_at_point(
 
 
 def on_land_at_point(lat: float, lon: float) -> bool | None:
-    """True/false when a cached land mask covers the point; None when unknown."""
+    """True/false when a land mask covers the point; None when unknown.
+
+    Prefers a prepare-cache clip covering the point; falls back to the chart-wide
+    OSM land_chart.geojson so browse clicks match map land fill without a course prepare.
+    """
     land_path = _covering_land_geojson(lat, lon)
-    if land_path is None:
-        return None
-    return LandMask.from_geojson(land_path).on_land((lat, lon))
+    if land_path is not None:
+        return LandMask.from_geojson(land_path).on_land((lat, lon))
+    if _LAND_CHART_GEOJSON.exists():
+        try:
+            return LandMask.from_geojson(_LAND_CHART_GEOJSON).on_land((lat, lon))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("land_chart.geojson on_land failed: %s", exc)
+            return None
+    return None
 
 
 def elevation_at_point(lat: float, lon: float) -> float | None:

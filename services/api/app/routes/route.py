@@ -123,7 +123,9 @@ def _run_route(
                 }
             )
             t_wind = time.perf_counter()
-            wind = ensure_wind_window(model_id, bbox, start=depart, end=end)
+            wind = ensure_wind_window(
+                model_id, bbox, start=depart, end=end, pad_region=False
+            )
             wind_ms = (time.perf_counter() - t_wind) * 1000
             logger.info("route %s wind initial %.0fms horizon=%dh", model_id, wind_ms, horizon_h)
             emit(
@@ -148,7 +150,17 @@ def _run_route(
 
         route: ModelRoute | None = None
         for extend_round in range(_MAX_EXTEND_ROUNDS + 1):
-            t_iso = time.perf_counter()
+            # Soft hazard grid is disabled — router construction is instant.
+            # Keep a prepare stage event so the UI progress pipeline stays stable.
+            emit(
+                {
+                    "type": "stage",
+                    "key": "prepare",
+                    "model_id": model_id,
+                    "status": "start",
+                }
+            )
+            t_prep = time.perf_counter()
             engine = IsochroneRouter(
                 boat=boat,
                 wind=wind,
@@ -157,6 +169,18 @@ def _run_route(
                 on_progress=on_progress,
                 model_id=model_id,
             )
+            prep_ms = (time.perf_counter() - t_prep) * 1000
+            logger.info("route %s prepare %.0fms", model_id, prep_ms)
+            emit(
+                {
+                    "type": "stage",
+                    "key": "prepare",
+                    "model_id": model_id,
+                    "status": "done",
+                    "ms": round(prep_ms, 1),
+                }
+            )
+            t_iso = time.perf_counter()
             route = engine.route(req.course, model_id)
             logger.info(
                 "route %s isochrone round=%d exhausted=%s %.0fms",
@@ -196,8 +220,12 @@ def _run_route(
             )
             try:
                 t_ext = time.perf_counter()
-                ensure_wind_window(model_id, bbox, start=t_last, end=t_ext_end)
-                wind = ensure_wind_window(model_id, bbox, start=depart, end=t_ext_end)
+                ensure_wind_window(
+                    model_id, bbox, start=t_last, end=t_ext_end, pad_region=False
+                )
+                wind = ensure_wind_window(
+                    model_id, bbox, start=depart, end=t_ext_end, pad_region=False
+                )
                 ext_ms = (time.perf_counter() - t_ext) * 1000
                 logger.info(
                     "route %s extend wind %.0fms n_times=%s",

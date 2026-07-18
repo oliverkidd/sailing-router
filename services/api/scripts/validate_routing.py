@@ -728,8 +728,18 @@ def gate2(results: dict[str, ScenarioMetrics]) -> None:
     _assert(upwind.n_tacks <= 3, f"upwind n_tacks<=3 (got {upwind.n_tacks})", failures)
     if upwind.n_tacks >= 1:
         _assert(
-            upwind.min_tack_leg_nm is None or upwind.min_tack_leg_nm > 0.15,
-            f"upwind min tack leg > 0.15 nm (got {upwind.min_tack_leg_nm})",
+            upwind.min_tack_leg_nm is None or upwind.min_tack_leg_nm > 0.4,
+            f"upwind min tack leg > 0.4 nm (got {upwind.min_tack_leg_nm})",
+            failures,
+        )
+    # Open-water reach/upwind must not thrash with consecutive micro-maneuvers.
+    for name in ("reach", "upwind"):
+        if name not in results:
+            continue
+        m = results[name]
+        _assert(
+            m.max_consecutive_maneuvers <= 3,
+            f"{name}: max_consecutive_maneuvers<=3 (got {m.max_consecutive_maneuvers})",
             failures,
         )
     # Pinch: never offer unsailable mark bearing; no sub-1kt crawling legs.

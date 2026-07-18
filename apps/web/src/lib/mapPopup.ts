@@ -26,13 +26,21 @@ function fmtNum(n: number | null | undefined, digits = 1): string {
 
 function terrainGauge(data: PointInspect): { label: string; value: string; unit: string } {
   const onLand = data.on_land === true;
+  const elev = data.elevation_m;
+  const elevOk = elev != null && !Number.isNaN(elev);
+
+  // DEM-first: positive DEM height wins even when on_land is null/false
+  // (prepare-cache miss or OSM/DEM shore mismatch). Sea DEM is often 0.0 — not Elev.
+  if (elevOk && elev > 0) {
+    return { label: "Elev", value: fmtNum(elev, 0), unit: "m" };
+  }
+
   if (onLand) {
-    if (data.elevation_m == null || Number.isNaN(data.elevation_m)) {
-      // Land polygon without DEM height — coverage gap, not sea level.
+    if (!elevOk) {
       const hint = data.dem_available === false || data.dem_available == null ? " (no DEM)" : "";
       return { label: "Elev", value: `—${hint}`, unit: "m" };
     }
-    return { label: "Elev", value: fmtNum(data.elevation_m, 0), unit: "m" };
+    return { label: "Elev", value: fmtNum(elev, 0), unit: "m" };
   }
   if (data.depth_m != null) {
     return { label: "Depth", value: fmtNum(data.depth_m, 1), unit: "m" };
@@ -40,10 +48,10 @@ function terrainGauge(data: PointInspect): { label: string; value: string; unit:
   if (data.depth_lt_m != null) {
     return { label: "Depth", value: `<${data.depth_lt_m}`, unit: "m" };
   }
-  if (data.elevation_m != null && data.elevation_m < 0) {
-    return { label: "Depth", value: fmtNum(-data.elevation_m, 1), unit: "m" };
+  if (elevOk && elev < 0) {
+    return { label: "Depth", value: fmtNum(-elev, 1), unit: "m" };
   }
-  return { label: "Elev", value: fmtNum(data.elevation_m, 0), unit: "m" };
+  return { label: "Elev", value: fmtNum(elev, 0), unit: "m" };
 }
 
 export function formatPointPopup(data: PointInspect): string {

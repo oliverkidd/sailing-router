@@ -6,7 +6,8 @@ heading fan, widened near blocked water), each producing a child node after appl
 the polar, leeway, and the land/depth/exclusion masks. Candidates slower than a
 fraction of beat-angle boat speed are skipped (no no-go pinching). The frontier is
 pruned as a true earliest-time isochrone: bucket by bearing from the leg origin,
-keep greatest distance-made-good toward the target with a light maneuver tiebreak.
+keep greatest distance-made-good toward the target with maneuver + heading-continuity
+tiebreaks (no soft depth/shore cost — depth is a hard min+margin cutoff).
 Then we backtrack parent pointers from the best finish node into a list of RouteLegs.
 """
 
@@ -21,7 +22,7 @@ from typing import Any
 
 from .boat import Boat
 from .geo import GeoContext, bearing, destination, distance_nm
-from .geo.hazard import HazardGrid, build_hazard_grid
+from .geo.hazard import HazardGrid
 from .metocean import WindField
 from .navmath import magnitude_bearing, norm360, signed_diff, twa_from, vector
 from .schemas import Course, Mark, ModelRoute, RouteLeg
@@ -63,8 +64,8 @@ class RouterParams:
     cluster_cell_deg: float = 0.03
     max_frontier: int = 3000
     max_steps_per_leg: int = 4000
-    # Soft prune cost (nm): prefers long tacks without overstanding the layline.
-    maneuver_prune_nm: float = 0.25
+    # Soft prune cost (nm) per tack/gybe — prefers long clean tacks over scribbles.
+    maneuver_prune_nm: float = 0.55
     depth_safety_margin_m: float = 1.0
     # Base abort if remaining-to-target fails to improve; scaled up with leg length.
     no_progress_steps: int = 60
@@ -76,6 +77,8 @@ class RouterParams:
     min_bsp_fraction_of_beat: float = 0.4
     # Remaining distance (nm) below which we use a finer time step near the mark.
     near_mark_nm: float = 0.8
+    # Soft prune nm when heading changes a lot vs parent (kills micro-wiggles).
+    heading_continuity_nm: float = 0.08
 
 
 def _wind_side(heading: float, twd: float) -> float:
@@ -112,19 +115,32 @@ def _prune_score(
     maneuver_nm: float,
     max_maneuvers: int,
     overflow_nm: float,
+    heading_continuity_nm: float = 0.0,
 ) -> float:
-    """Lower is better: remaining-to-target (true earliest-arrival proxy).
+    """Lower is better: remaining-to-target + maneuver / heading continuity costs.
 
-    Per-maneuver fake nm cost is disabled by default (``maneuver_nm=0``) because
-    tack/gybe time is already paid in ``eff_dt`` — double-counting made the
-    frontier overstand the layline. A tiny radial bonus keeps wing tacks alive;
-    overflow cost soft-caps cove thrashing without emptying the frontier.
+    Soft depth/shore hazard is intentionally NOT in the score — depth is a hard
+    cutoff only. Maneuver + heading continuity prefer long clean tacks over
+    scribble zigzags; overflow soft-caps cove thrashing.
     """
     overflow = max(0, node.n_maneuvers - max_maneuvers)
+    heading_pen = 0.0
+    if (
+        heading_continuity_nm > 0
+        and node.parent is not None
+        and node.parent.heading is not None
+        and node.heading is not None
+        and node.maneuver == "none"
+    ):
+        # Penalise large course changes that are not labelled tack/gybe (micro-wiggles).
+        err = abs(signed_diff(node.heading, node.parent.heading))
+        if err > 20.0:
+            heading_pen = heading_continuity_nm * ((err - 20.0) / 45.0)
     return (
         _remaining_nm(node, target)
         + maneuver_nm * node.n_maneuvers
         + overflow_nm * overflow
+        + heading_pen
         - 0.01 * distance_nm(origin, node.pos)
     )
 
@@ -160,16 +176,11 @@ class IsochroneRouter:
         self.model_id = model_id
         # Apply safety margin to geo blocking for this route.
         self.geo.depth_safety_margin_m = params.depth_safety_margin_m
+        # Soft hazard is disabled by product decision: depth is a hard cutoff only
+        # (min_depth_m + safety margin). Passing an explicit HazardGrid still works
+        # for tests that want soft costs.
         if hazard is _AUTO_HAZARD:
-            if geo.depth is not None:
-                self.hazard = build_hazard_grid(
-                    geo.depth,
-                    geo.land,
-                    min_depth_m=geo.min_depth_m,
-                    safety_margin_m=params.depth_safety_margin_m,
-                )
-            else:
-                self.hazard = None
+            self.hazard = None
         else:
             self.hazard = hazard  # type: ignore[assignment]
         self._fan_headings = [
@@ -249,8 +260,6 @@ class IsochroneRouter:
             )
             if self.geo.blocked_segment(node.pos, probe) or self.geo.blocked_point(probe):
                 fan_half = 90.0
-            elif self.hazard is not None and self.hazard.cost_at(probe) > 15.0:
-                fan_half = 75.0
 
         for h in self._fan_headings:
             if abs(signed_diff(h, node.heading)) <= fan_half:
@@ -293,6 +302,7 @@ class IsochroneRouter:
             self.p.maneuver_prune_nm,
             self.p.max_consecutive_maneuvers,
             self.p.maneuver_overflow_nm,
+            self.p.heading_continuity_nm,
         )
 
     def _prune(
@@ -382,8 +392,11 @@ class IsochroneRouter:
 
                 ctw = heading + self.boat.leeway_offset(tws, bsp, twd, heading)
                 vx, vy = vector(norm360(ctw), bsp)
-                haz = self.hazard.cost_at((node.lat, node.lon)) if self.hazard else 0.0
-                haz = min(haz, step_s * 0.2)
+                # Soft hazard disabled: depth is hard-cutoff only via geo.blocked_*.
+                # Optional HazardGrid (explicit ctor arg) still applies for tests.
+                haz = 0.0
+                if self.hazard is not None:
+                    haz = min(self.hazard.cost_at((node.lat, node.lon)), step_s * 0.2)
                 eff_dt = max(0.0, step_s - pen - haz)
                 nlat, nlon = _advance(node.lat, node.lon, vx, vy, eff_dt)
 

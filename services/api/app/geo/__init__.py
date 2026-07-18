@@ -186,8 +186,8 @@ class GeoContext:
         return False
 
 
-# Shared wind/geo margin for prepare + /route (same region_bbox as map when viewport covers course).
-COURSE_WIND_MARGIN_DEG = 1.0
+# Shared wind/geo margin for prepare + /route (corridor around the course).
+COURSE_WIND_MARGIN_DEG = 0.35
 
 
 def course_bbox(course: Course, margin_deg: float = COURSE_WIND_MARGIN_DEG) -> BBox:

@@ -137,6 +137,51 @@ def test_roughness_speedup_factor():
     print(f"OK roughness speedup (land={float(land.mean()):.3f})")
 
 
+def test_vectorised_downscale_matches_pointwise():
+    """Vectorised downscale_grid agrees with per-cell sample+apply on a tiny lib."""
+    from app.wind.operator import apply_response, downscale_grid
+    from app.wind.terrain_library import N_SECTORS, TerrainLibrary, day_frac_utc
+
+    lats = np.linspace(37.5, 37.6, 5)
+    lons = np.linspace(24.5, 24.6, 5)
+    # Synthetic library: speedup increases with lat; deflection = 5°.
+    nlat, nlon = lats.size, lons.size
+    su = np.ones((N_SECTORS, 2, nlat, nlon), dtype=np.float32)
+    de = np.full((N_SECTORS, 2, nlat, nlon), 5.0, dtype=np.float32)
+    for i in range(nlat):
+        su[:, :, i, :] = 0.8 + 0.4 * (i / max(1, nlat - 1))
+    lib = TerrainLibrary(
+        lats=lats,
+        lons=lons,
+        speedup=su,
+        deflection_deg=de,
+        source="test",
+    )
+    times = np.array([datetime(2026, 7, 18, 12, tzinfo=UTC).timestamp()], dtype=float)
+    u = np.full((1, nlat, nlon), 10.0, dtype=np.float32)
+    v = np.zeros((1, nlat, nlon), dtype=np.float32)
+    forcing = WindField.build("test", times, lats, lons, u, v)
+
+    grid = downscale_grid(forcing, lib, lats, lons)
+    te = float(times[0])
+    max_err = 0.0
+    for i, la in enumerate(lats):
+        for j, lo in enumerate(lons):
+            resp = lib.sample(
+                float(la),
+                float(lo),
+                wind_dir_from_deg=270.0,
+                day_frac=day_frac_utc(te, float(lo)),
+            )
+            u_exp, v_exp = apply_response(10.0, 0.0, resp)
+            err = abs(float(grid.u10[0, i, j]) - u_exp) + abs(
+                float(grid.v10[0, i, j]) - v_exp
+            )
+            max_err = max(max_err, err)
+    assert max_err < 1e-3, f"vectorised vs pointwise max_err={max_err}"
+    print(f"OK vectorised downscale_grid (max_err={max_err:.2e})")
+
+
 def test_cyclades_library_coastal_vs_sea():
     """If a baked Cyclades library exists, coastal/lee differs from mid-sea identity."""
     from app.wind.terrain_library import REGION_LIBRARY, load_library_for_bbox
@@ -193,6 +238,7 @@ def main() -> int:
     test_native_canonical_grid()
     test_identity_library_roundtrip()
     test_roughness_speedup_factor()
+    test_vectorised_downscale_matches_pointwise()
     test_cyclades_library_coastal_vs_sea()
     print("\nAll wind pipeline tests passed.")
     return 0

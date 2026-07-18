@@ -18,6 +18,7 @@ from .forecast.grib_source import ForecastRateLimitError
 from .metocean import WindField
 from .schemas import BBox
 from .util.bbox import (
+    align_tile_bbox,
     canonical_grid,
     hourly_epochs,
     region_bbox,
@@ -90,6 +91,7 @@ def get_area_field(
     start: datetime,
     end: datetime,
     cycle: str = "latest",
+    pad_region: bool = True,
 ) -> WindField | None:
     """Load or fetch coarse NWP forcing at model-native resolution + hourly.
 
@@ -99,6 +101,10 @@ def get_area_field(
 
     This is the FORCING cache only — terrain downscaling is applied by
     WindProvider / DownscaledWindField on top.
+
+    pad_region: when True (browse), expand + snap via region_bbox for cache sharing.
+    When False (routing/prepare over an already-padded course corridor), skip the
+    extra +2° pad so we do not inflate a Solent course into a Channel-scale fetch.
     """
     t_all = time.perf_counter()
     if MODEL_PRESETS_BY_ID.get(model_id) is None:
@@ -127,7 +133,7 @@ def get_area_field(
     if end < start:
         start, end = end, start
 
-    region = region_bbox(bbox)
+    region = region_bbox(bbox) if pad_region else align_tile_bbox(bbox)
     res_deg = _forcing_res_deg(model_id)
     try:
         lats_t, lons_t = canonical_grid(region, res_deg=res_deg)
@@ -259,14 +265,20 @@ def ensure_wind_window(
     *,
     start: datetime,
     end: datetime,
+    pad_region: bool = True,
 ):
     """Downscaled WindField for [start,end] — used by prepare + /route.
 
     Returns a DownscaledWindField when a terrain library is present, else the
     raw forcing WindField. Both expose wind_at(lat, lon, t).
     Raises ForecastRateLimitError; returns None if unavailable.
+
+    pad_region: pass False for course-corridor routing so get_area_field does
+    not stack REGION_PAD on top of COURSE_WIND_MARGIN.
     """
-    return get_provider().downscaled_field(model_id, bbox, start=start, end=end)
+    return get_provider().downscaled_field(
+        model_id, bbox, start=start, end=end, pad_region=pad_region
+    )
 
 
 def get_display_series(
@@ -277,6 +289,7 @@ def get_display_series(
     end: datetime,
     zoom: float | None = None,
     enable_terrain: bool = True,
+    on_progress=None,
 ) -> dict | None:
     """Multi-hour series via WindProvider (zoom-tiered display window)."""
     return get_provider().display_series(
@@ -286,6 +299,7 @@ def get_display_series(
         end=end,
         zoom=zoom,
         enable_terrain=enable_terrain,
+        on_progress=on_progress,
     )
 
 

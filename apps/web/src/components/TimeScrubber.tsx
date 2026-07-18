@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import InstrumentCluster from "@/components/InstrumentCluster";
-import { colorForModel } from "@/lib/colors";
-import type { ModelRoute, RouteLeg } from "@/lib/types";
+import type { RouteLeg } from "@/lib/types";
 
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -71,10 +70,6 @@ export default function TimeScrubber({
   leg = null,
   playUntilUtc = null,
   distanceNm = 0,
-  routes = [],
-  activeModelId = "",
-  modelLabels = {},
-  onActiveModel,
 }: {
   overlayTimeUtc: string;
   onTime: (iso: string) => void;
@@ -86,11 +81,6 @@ export default function TimeScrubber({
   /** When set, autoplay stops at this time (e.g. route ETA). */
   playUntilUtc?: string | null;
   distanceNm?: number;
-  /** Computed routes — when >1, show forecast tabs above the scrubber. */
-  routes?: ModelRoute[];
-  activeModelId?: string;
-  modelLabels?: Record<string, string>;
-  onActiveModel?: (id: string) => void;
 }) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<PlaySpeed>(1);
@@ -121,8 +111,6 @@ export default function TimeScrubber({
     playUntilUtc != null ? Math.min(endMs, new Date(playUntilUtc).getTime()) : endMs;
   playEndRef.current = playEndMs;
   const atPlayEnd = curMs >= playEndMs;
-
-  const showRouteTabs = routeActive && routes.length > 1 && !!onActiveModel;
 
   useEffect(() => {
     if (!routeActive) {
@@ -218,36 +206,6 @@ export default function TimeScrubber({
       aria-label="Forecast time"
       aria-busy={loading || undefined}
     >
-      {showRouteTabs && (
-        <div className="time-nav-tabs" role="tablist" aria-label="Forecast model">
-          {routes.map((r) => {
-            const active = r.model_id === activeModelId;
-            const color = colorForModel(r.model_id);
-            const label = modelLabels[r.model_id] ?? r.model_id;
-            return (
-              <button
-                key={r.model_id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                className={`time-nav-tab${active ? " active" : ""}`}
-                style={{
-                  borderColor: color,
-                  background: active ? color : "transparent",
-                  color: active ? "#04231f" : "var(--text)",
-                }}
-                onClick={() => {
-                  setPlaying(false);
-                  onActiveModel?.(r.model_id);
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
       <div className="time-nav-row">
         <button
           type="button"

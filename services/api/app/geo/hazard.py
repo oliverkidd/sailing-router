@@ -1,8 +1,8 @@
 """Hazard reward/punish grid: soft time cost near shore and shoals.
 
-Built once per route from the single-source chart depth + land mask. Sampled
-during isochrone expansion and applied as lost effective time (same mechanism
-as tack/gybe penalties) so the optimum is gently pushed offshore.
+Unused by the live IsochroneRouter (product decision: depth is a hard
+min_depth + margin cutoff only). Kept for offline experiments / tests that
+pass an explicit HazardGrid into the router.
 """
 
 from __future__ import annotations

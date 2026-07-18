@@ -11,13 +11,11 @@ from ..schemas import Course
 
 # Match map scrubber prefetch window (apps/web PREFETCH_WINDOW_H).
 CHUNK_H = 3
-# Cap the *initial* /route wind prefetch; longer courses extend +3h as needed.
-INITIAL_ROUTE_HORIZON_H = 24
-# Conservative cruise speed so upwind/detour courses don't exhaust forecast mid-route
-# and trigger full re-routes (each extend re-runs the whole course).
-_ASSUMED_SPEED_KN = 3.5
-# Extra headroom multiplier on top of distance/speed estimate.
-_HORIZON_PAD = 1.4
+# Fixed upfront window for /route — no cruise-speed guess; exhausted extends +3h.
+INITIAL_ROUTE_HORIZON_H = 6
+# Distance-based estimate kept for non-routing callers (e.g. prepare / UI hints).
+_ASSUMED_SPEED_KN = 4.0
+_HORIZON_PAD = 1.2
 _MIN_HORIZON_H = 6
 _MAX_HORIZON_H = 168  # 7 days hard cap
 
@@ -31,15 +29,18 @@ def course_distance_nm(course: Course) -> float:
 
 
 def routing_horizon_h(course: Course) -> int:
-    """Hours of forecast to prefetch: ceil(course_nm / 3.5 kn * 1.4), clamped 6..168."""
+    """Hours estimate: ceil(course_nm / 4 kn * 1.2), clamped 6..168.
+
+    Not used for the initial /route wind fetch — see initial_route_horizon_h.
+    """
     dist = max(1.0, course_distance_nm(course))
     hours = math.ceil(dist / _ASSUMED_SPEED_KN * _HORIZON_PAD)
     return int(max(_MIN_HORIZON_H, min(_MAX_HORIZON_H, hours)))
 
 
-def initial_route_horizon_h(course: Course) -> int:
-    """Shorter upfront window for /route; extend path covers the rest."""
-    return min(routing_horizon_h(course), INITIAL_ROUTE_HORIZON_H)
+def initial_route_horizon_h(_course: Course | None = None) -> int:
+    """Fixed short window for /route; forecast_exhausted extends +CHUNK_H."""
+    return INITIAL_ROUTE_HORIZON_H
 
 
 def estimate_horizon_h(course: Course) -> int:

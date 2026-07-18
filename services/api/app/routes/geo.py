@@ -16,12 +16,19 @@ def elevation(lat: float, lon: float) -> ElevationResponse:
     depth_m = depth_at_point(lat, lon)
     on_land = on_land_at_point(lat, lon)
     terrain = get_terrain()
+    elevation_m = elevation_at_point(lat, lon)
     return ElevationResponse(
         lat=lat,
         lon=lon,
-        elevation_m=elevation_at_point(lat, lon),
+        elevation_m=elevation_m,
         depth_m=depth_m,
-        depth_lt_m=depth_lt_at_point(lat, lon, on_land=on_land, depth_m=depth_m),
+        depth_lt_m=depth_lt_at_point(
+            lat,
+            lon,
+            on_land=on_land,
+            depth_m=depth_m,
+            elevation_m=elevation_m,
+        ),
         on_land=on_land,
         dem_available=terrain.covers(lat, lon) if terrain.available else False,
     )

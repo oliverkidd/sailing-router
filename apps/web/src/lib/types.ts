@@ -94,7 +94,7 @@ export interface RouteResponse {
 export type RouteProgressEvent =
   | {
       type: "stage";
-      key: "geo" | "wind" | "wind_extend" | string;
+      key: "land" | "depth" | "wind" | "wind_extend" | "prepare" | string;
       status: "start" | "done" | "error";
       model_id?: string;
       ms?: number;

@@ -136,6 +136,105 @@ export async function fetchWindArea(
   }
 }
 
+/** Cold-load wind via SSE stages (forcing → library → regrid → payload). */
+export async function fetchWindAreaStream(
+  bbox: MapBounds,
+  modelId: string,
+  startUtc: string,
+  endUtc: string,
+  onEvent: (event: import("./windLoadProgress").WindProgressEvent) => void,
+  signal?: AbortSignal,
+  zoom?: number,
+  terrain?: boolean,
+): Promise<WindSeriesResult> {
+  const extra: Record<string, string> = {
+    model_id: modelId,
+    start_utc: startUtc,
+    end_utc: endUtc,
+  };
+  if (zoom != null && Number.isFinite(zoom)) {
+    extra.zoom = String(zoom);
+  }
+  if (terrain === false) {
+    extra.terrain = "false";
+  }
+  const q = bboxParams(bbox, extra);
+  const t0 = performance.now();
+  try {
+    const res = await fetch(`${API_BASE}/wind/area/stream?${q}`, {
+      signal,
+      headers: { Accept: "text/event-stream" },
+    });
+    if (!res.ok) {
+      return { series: null, error: `Wind stream API error (${res.status})` };
+    }
+    if (!res.body) {
+      return { series: null, error: "Wind stream returned no body" };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let series: WindSeries | null = null;
+    let streamError: string | null = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        const dataLine = part
+          .split("\n")
+          .map((l) => l.trimEnd())
+          .find((l) => l.startsWith("data:"));
+        if (!dataLine) continue;
+        const raw = dataLine.slice(5).trim();
+        if (!raw || raw === "[DONE]") continue;
+        let event: import("./windLoadProgress").WindProgressEvent;
+        try {
+          event = JSON.parse(raw) as import("./windLoadProgress").WindProgressEvent;
+        } catch {
+          continue;
+        }
+        onEvent(event);
+        if (event.type === "result") {
+          series = event.series as unknown as WindSeries;
+        } else if (event.type === "error" && !series) {
+          streamError = event.message;
+        }
+      }
+    }
+
+    const elapsedMs = Math.round(performance.now() - t0);
+    if (series?.times?.length) {
+      if (process.env.NODE_ENV === "development") {
+        console.info("[forecast] /wind/area/stream OK", {
+          modelId,
+          hours: series.times.length,
+          elapsedMs,
+          terrain: series.terrain_applied,
+          tier: series.zoom_tier,
+        });
+      }
+      return { series };
+    }
+    if (series?.error) {
+      return { series: null, error: series.message || "Wind unavailable" };
+    }
+    return { series: null, error: streamError || "Wind stream ended without a result" };
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      return { series: null, error: "aborted" };
+    }
+    return {
+      series: null,
+      error: e instanceof Error ? e.message : "Wind stream failed",
+    };
+  }
+}
+
 /** @deprecated Use fetchWindArea */
 export const fetchWindSeries = fetchWindArea;
 

@@ -9,8 +9,13 @@ import ForecastPicker from "@/components/ForecastPicker";
 import MapControls from "@/components/MapControls";
 import MapLoadOverlay, { type MapLoadKind } from "@/components/MapLoadOverlay";
 import { type ModelStatus } from "@/components/RouteBuildProgress";
-import { applyRouteEvent, initialRouteSteps } from "@/components/RouteProgress";
+import {
+  applyRouteEvent,
+  initialRouteSteps,
+  resetModelSteps,
+} from "@/components/RouteProgress";
 import RouteDetailPanel from "@/components/RouteDetailPanel";
+import RouteModelTabs from "@/components/RouteModelTabs";
 import RouteReview, { formatSummaryClipboard } from "@/components/RouteReview";
 import TimeScrubber from "@/components/TimeScrubber";
 import WindLegend from "@/components/WindLegend";
@@ -39,6 +44,7 @@ import {
 import {
   contiguousRunMax,
   fetchWindArea,
+  fetchWindAreaStream,
   floorHourIso,
   hoursAheadIso,
   mergeSeries,
@@ -46,6 +52,7 @@ import {
   seriesCoversHour,
   type WindSeries,
 } from "@/lib/meteoGrid";
+import { applyWindEvent, initialWindSteps } from "@/lib/windLoadProgress";
 import type {
   BoatConfig,
   Course,
@@ -56,7 +63,7 @@ import type {
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
-const SERIES_MARGIN_DEG = 0.5;
+const SERIES_MARGIN_DEG = 0.35;
 /** Scrubber range; browse wind uses focus + sliding prefetch. */
 const SCRUB_HORIZON_H = 120;
 /** Focus hour + (N-1) ahead on land; extend by N at penultimate. */
@@ -135,7 +142,13 @@ export default function Home() {
   >("idle");
   const [routeModal, setRouteModal] = useState<"hidden" | "running" | "error">("hidden");
   const [routeSteps, setRouteSteps] = useState<RouteProgressStep[]>([]);
+  const [windSteps, setWindSteps] = useState<RouteProgressStep[]>([]);
   const [routeWarnings, setRouteWarnings] = useState<string[]>([]);
+  /** Models that failed / unfinished — show per-card Retry. */
+  const [retryableModelIds, setRetryableModelIds] = useState<string[]>([]);
+  /** Successful routes held while other models still need retry. */
+  const pendingRoutesRef = useRef<ModelRoute[]>([]);
+  const routeRunModelIdsRef = useRef<string[]>([]);
   const [browseCache, setBrowseCache] = useState<Record<string, WindCacheEntry>>({});
   const [routeCache, setRouteCache] = useState<Record<string, WindSeries>>({});
   const [overlayStatus, setOverlayStatus] = useState<Record<string, ModelStatus>>({});
@@ -152,7 +165,9 @@ export default function Home() {
   browseCacheRef.current = browseCache;
 
   // Drop other models' wind grids when switching tab — tiles stay on disk.
+  // Skip in route review so tab flips don't touch browse cache.
   useEffect(() => {
+    if (routes.length > 0) return;
     setBrowseCache((prev) => {
       if (!activeModelId) return {};
       const keep = prev[activeModelId];
@@ -160,7 +175,7 @@ export default function Home() {
       if (Object.keys(prev).length === 1 && prev[activeModelId]) return prev;
       return { [activeModelId]: keep };
     });
-  }, [activeModelId]);
+  }, [activeModelId, routes.length]);
 
   const horizonEndUtc = useMemo(
     () => hoursAheadIso(horizonStartUtc, SCRUB_HORIZON_H),
@@ -177,17 +192,38 @@ export default function Home() {
 
   const scrubHourUtc = floorHourIso(overlayTimeUtc);
   const activeStatus = activeModelId ? overlayStatus[activeModelId] : undefined;
+  const mapMode: "browse" | "routeReview" =
+    routes.length > 0 || routeModal === "running" || routeModal === "error"
+      ? "routeReview"
+      : "browse";
+  const inRouteReview = routes.length > 0;
   const hourUncovered =
-    routes.length === 0 &&
+    mapMode === "browse" &&
     !!activeModelId &&
     selected.has(activeModelId) &&
     apiUp === true &&
     (!windSeries || !seriesCoversHour(windSeries, scrubHourUtc));
-  // Show loading as soon as the scrub hour isn't covered (before the debounced fetch),
-  // but stop if that hour already failed.
+  // Never show wind load overlay in route review — series are prefetched silently.
   const windLoading =
-    activeStatus === "fetching" || (hourUncovered && activeStatus !== "error");
+    mapMode === "browse" &&
+    (activeStatus === "fetching" || (hourUncovered && activeStatus !== "error"));
   const routeLoading = routeModal !== "hidden";
+
+  const modelLabels = useMemo(
+    () => Object.fromEntries(availableModels.map((m) => [m.id, m.label])),
+    [availableModels],
+  );
+
+  const routeHorizonEndUtc = useMemo(() => {
+    if (routes.length === 0) return horizonEndUtc;
+    let maxEta = course.depart_utc;
+    for (const r of routes) {
+      if (r.eta_utc && new Date(r.eta_utc).getTime() > new Date(maxEta).getTime()) {
+        maxEta = r.eta_utc;
+      }
+    }
+    return maxEta;
+  }, [routes, course.depart_utc, horizonEndUtc]);
 
   let mapLoadKind: MapLoadKind | null = null;
   let mapLoadLabel = "";
@@ -345,7 +381,27 @@ export default function Home() {
       setStatus(modelId, "fetching");
       if (modelId === activeModelId) setOverlayMsg(null);
 
-      fetchWindArea(reqBounds, modelId, hour, endHour, ac.signal, zoom, useTerrain)
+      const cold = !browseCacheRef.current[modelId]?.series;
+      if (cold) {
+        setWindSteps(initialWindSteps(useTerrain));
+      }
+
+      const fetchPromise = cold
+        ? fetchWindAreaStream(
+            reqBounds,
+            modelId,
+            hour,
+            endHour,
+            (event) => {
+              setWindSteps((prev) => applyWindEvent(prev, event));
+            },
+            ac.signal,
+            zoom,
+            useTerrain,
+          )
+        : fetchWindArea(reqBounds, modelId, hour, endHour, ac.signal, zoom, useTerrain);
+
+      fetchPromise
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
@@ -514,7 +570,7 @@ export default function Home() {
     [fetchBrowseFocus, prefetchBrowseRange, mapZoom, windNinjaOpt],
   );
 
-  // Load route-window series into routeCache per route model (no refetch on tab switch).
+  // Load route-window series into routeCache per route model (silent; no overlay).
   useEffect(() => {
     if (routes.length === 0 || !courseIsReady(course) || apiUp !== true) return;
 
@@ -528,9 +584,9 @@ export default function Home() {
       const ac = new AbortController();
       routeAbortRefs.current.set(modelId, ac);
       const { start, end } = routeTimeWindow(route, course.depart_utc);
-      setStatus(modelId, "fetching");
+      // Do not set overlayStatus fetching — would flash wind load modal in review.
 
-      fetchWindArea(bbox, modelId, start, end, ac.signal, mapZoom)
+      fetchWindArea(bbox, modelId, start, end, ac.signal, undefined)
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
@@ -552,7 +608,7 @@ export default function Home() {
     };
     // Intentionally omit routeCache from deps — we gate on miss inside the loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routes, courseRouteKey, course, apiUp, setStatus, mapZoom]);
+  }, [routes, courseRouteKey, course, apiUp, setStatus]);
 
   // Browse: only the active model — wind series stay small in RAM; chart tiles are on disk.
   useEffect(() => {
@@ -766,6 +822,44 @@ export default function Home() {
     setPrepState("idle");
     setRoutes([]);
     setRouteCache({});
+    setRetryableModelIds([]);
+    pendingRoutesRef.current = [];
+    routeRunModelIdsRef.current = [];
+  };
+
+  const finishRouteSuccess = (okRoutes: ModelRoute[], warnings: string[]) => {
+    pendingRoutesRef.current = [];
+    setRetryableModelIds([]);
+    setRoutes(okRoutes);
+    setActiveModelId(okRoutes[0].model_id);
+    setRouteIndex(0);
+    setOverlayTimeUtc(course.depart_utc);
+    setHorizonStartUtc(course.depart_utc);
+    setShowWind(true);
+    setFitRouteKey(`${Date.now()}-${okRoutes.length}`);
+    if (warnings.length > 0) {
+      setPrepState("warning");
+      setRunMsg(warnings[0]);
+      setRouteWarnings(warnings);
+    } else {
+      setPrepState("ready");
+      setRunMsg("");
+      setRouteWarnings([]);
+    }
+    setRouteModal("hidden");
+    setRouteSteps([]);
+  };
+
+  /** Leave route review → browse / edit course. */
+  const exitRouting = () => {
+    for (const ac of routeAbortRefs.current.values()) ac.abort();
+    routeAbortRefs.current.clear();
+    dismissRouteModal();
+    const now = currentForecastHourUtc();
+    setOverlayTimeUtc(now);
+    setHorizonStartUtc(now);
+    setFitRouteKey("");
+    setDetailOpen(false);
   };
 
   const runRoute = async () => {
@@ -793,6 +887,9 @@ export default function Home() {
     setRouteWarnings([]);
     setRoutes([]);
     setRouteCache({});
+    setRetryableModelIds([]);
+    pendingRoutesRef.current = [];
+    routeRunModelIdsRef.current = modelIds;
     setRouteSteps(initialRouteSteps(modelIds, course));
     try {
       const warningsAcc: string[] = [];
@@ -824,26 +921,47 @@ export default function Home() {
       const allWarnings = [...new Set([...warningsAcc, ...res.warnings])];
       setRouteWarnings(allWarnings);
 
-      const unfinished = res.routes.some((r) => r.unreachable);
-      const failed = res.routes.length === 0 || unfinished;
+      const okRoutes = res.routes.filter((r) => !r.unreachable);
+      const failedModelIds = modelIds.filter(
+        (id) => !okRoutes.some((r) => r.model_id === id),
+      );
 
-      if (failed) {
-        // Keep modal open; do not show a partial route on the map.
+      if (failedModelIds.length > 0) {
+        // Hold successes for merge after per-card retry; no partial route on map yet.
+        pendingRoutesRef.current = okRoutes;
         setRoutes([]);
+        setRetryableModelIds(failedModelIds);
         setPrepState("error");
         setRunMsg(
-          allWarnings.find((w) => w.includes("unreachable") || w.includes("unfinished")) ||
-            allWarnings[0] ||
+          allWarnings.find(
+            (w) =>
+              !/forecast exhausted/i.test(w) &&
+              (w.includes("unreachable") || w.includes("unfinished")),
+          ) ||
+            allWarnings.find((w) => !/forecast exhausted/i.test(w)) ||
             "Route unfinished — some marks unreachable",
         );
         setRouteSteps((prev) => {
           const copy = prev.map((s) => ({ ...s }));
-          // Ensure a failed leg shows error if stream only sent warnings.
-          const errIdx = copy.findIndex((s) => s.status === "error");
-          if (errIdx < 0) {
-            const active = copy.findIndex((s) => s.status === "active");
+          for (const mid of failedModelIds) {
+            const belongs = (id: string) =>
+              id === `wind:${mid}` ||
+              id === `prepare:${mid}` ||
+              id.startsWith(`leg:${mid}:`);
+            const hasHardError = copy.some(
+              (s) => belongs(s.id) && s.status === "error",
+            );
+            if (hasHardError) continue;
+            // Forecast exhausted: leave the segment spinning — not an error.
+            const exhaustedOnly = allWarnings.some(
+              (w) => w.includes(mid) && /forecast exhausted/i.test(w),
+            );
+            if (exhaustedOnly) continue;
+            const active = copy.findIndex(
+              (s) => belongs(s.id) && s.status === "active",
+            );
             const pendingLeg = copy.findIndex(
-              (s) => s.id.startsWith("leg:") && s.status === "pending",
+              (s) => s.id.startsWith(`leg:${mid}:`) && s.status === "pending",
             );
             const target = active >= 0 ? active : pendingLeg;
             if (target >= 0) {
@@ -858,34 +976,139 @@ export default function Home() {
         });
         setRouteModal("error");
       } else {
-        setRoutes(res.routes);
-        setActiveModelId(res.routes[0].model_id);
-        setRouteIndex(0);
-        setOverlayTimeUtc(course.depart_utc);
-        setShowWind(true);
-        setFitRouteKey(`${Date.now()}-${res.routes.length}`);
-        if (allWarnings.length > 0) {
-          setPrepState("warning");
-          setRunMsg(allWarnings[0]);
-          setRouteWarnings(allWarnings);
-        } else {
-          setPrepState("ready");
-          setRunMsg("");
-          setRouteWarnings([]);
-        }
-        setRouteModal("hidden");
-        setRouteSteps([]);
+        finishRouteSuccess(okRoutes, allWarnings);
       }
     } catch (e) {
       console.error("[route] failed:", e);
       setPrepState("error");
       setRunMsg(String(e));
       setRoutes([]);
+      setRetryableModelIds(modelIds);
       setRouteSteps((prev) => {
         const active = prev.findIndex((s) => s.status === "active");
         if (active < 0) return prev;
         const copy = prev.map((s) => ({ ...s }));
         copy[active] = { ...copy[active], status: "error", detail: String(e) };
+        return copy;
+      });
+      setRouteModal("error");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  /** Re-route a single failed model without re-running the whole workflow. */
+  const retryModel = async (modelId: string) => {
+    if (!boat.polar_id || !courseIsReady(course)) return;
+    setRunning(true);
+    setRouteModal("running");
+    setPrepState("preparing");
+    setRunMsg("");
+    setRetryableModelIds((prev) => prev.filter((id) => id !== modelId));
+    setRouteSteps((prev) => resetModelSteps(prev, modelId, course));
+    try {
+      const warningsAcc: string[] = [];
+      const res = await api.routeStream(
+        {
+          course,
+          boat,
+          model_ids: [modelId],
+          time_step_s: 300,
+          heading_step_deg: 7.5,
+        },
+        (event) => {
+          if (event.type === "stage" && event.status === "start") {
+            setPrepState("ready");
+          }
+          if (event.type === "warning") {
+            warningsAcc.push(event.message);
+            setRouteWarnings((prev) => [...new Set([...prev, ...warningsAcc])]);
+          } else if (event.type === "error") {
+            warningsAcc.push(event.message);
+            setRouteWarnings((prev) => [...new Set([...prev, ...warningsAcc])]);
+            setPrepState("error");
+            setRunMsg(event.message);
+          }
+          setRouteSteps((prev) => applyRouteEvent(prev, event));
+        },
+      );
+
+      const allWarnings = [...new Set([...warningsAcc, ...res.warnings])];
+      const ok = res.routes.filter((r) => !r.unreachable && r.model_id === modelId);
+      if (ok.length === 0) {
+        setRetryableModelIds((prev) =>
+          prev.includes(modelId) ? prev : [...prev, modelId],
+        );
+        setPrepState("error");
+        setRunMsg(
+          allWarnings.find((w) => !/forecast exhausted/i.test(w)) ||
+            `${modelId}: route unfinished`,
+        );
+        setRouteSteps((prev) => {
+          const copy = prev.map((s) => ({ ...s }));
+          const belongs = (id: string) =>
+            id === `wind:${modelId}` ||
+            id === `prepare:${modelId}` ||
+            id.startsWith(`leg:${modelId}:`);
+          const hasHardError = copy.some(
+            (s) => belongs(s.id) && s.status === "error",
+          );
+          const exhaustedOnly = allWarnings.some(
+            (w) => w.includes(modelId) && /forecast exhausted/i.test(w),
+          );
+          if (!hasHardError && !exhaustedOnly) {
+            const active = copy.findIndex(
+              (s) => belongs(s.id) && s.status === "active",
+            );
+            if (active >= 0) {
+              copy[active] = {
+                ...copy[active],
+                status: "error",
+                detail: allWarnings[0] || "unreachable",
+              };
+            }
+          }
+          return copy;
+        });
+        setRouteModal("error");
+        return;
+      }
+
+      pendingRoutesRef.current = [
+        ...pendingRoutesRef.current.filter((r) => r.model_id !== modelId),
+        ...ok,
+      ];
+      const runIds = routeRunModelIdsRef.current;
+      const stillFailed = runIds.filter(
+        (id) => !pendingRoutesRef.current.some((r) => r.model_id === id),
+      );
+      if (stillFailed.length === 0) {
+        finishRouteSuccess(pendingRoutesRef.current, allWarnings);
+      } else {
+        setRetryableModelIds(stillFailed);
+        setRouteWarnings(allWarnings);
+        setRouteModal("error");
+        setPrepState("error");
+      }
+    } catch (e) {
+      console.error("[route] model retry failed:", e);
+      setPrepState("error");
+      setRunMsg(String(e));
+      setRetryableModelIds((prev) =>
+        prev.includes(modelId) ? prev : [...prev, modelId],
+      );
+      setRouteSteps((prev) => {
+        const copy = prev.map((s) => ({ ...s }));
+        const active = copy.findIndex(
+          (s) =>
+            s.status === "active" &&
+            (s.id === `wind:${modelId}` ||
+              s.id === `prepare:${modelId}` ||
+              s.id.startsWith(`leg:${modelId}:`)),
+        );
+        if (active >= 0) {
+          copy[active] = { ...copy[active], status: "error", detail: String(e) };
+        }
         return copy;
       });
       setRouteModal("error");
@@ -964,7 +1187,7 @@ export default function Home() {
         </div>
       </aside>
 
-      <div className="map-area">
+      <div className={`map-area${inRouteReview ? " map-area--review" : ""}`}>
         <MapView
           routes={routes}
           course={course}
@@ -1000,28 +1223,37 @@ export default function Home() {
           onOverlayError={setOverlayMsg}
           onViewportChange={handleViewportChange}
         />
+        {inRouteReview && (
+          <RouteModelTabs
+            routes={routes}
+            activeModelId={activeModelId}
+            modelLabels={modelLabels}
+            onActiveModel={setActiveModelId}
+          />
+        )}
         <TimeScrubber
           overlayTimeUtc={overlayTimeUtc}
           onTime={setOverlayTimeUtc}
           horizonStartUtc={horizonStartUtc}
-          horizonEndUtc={horizonEndUtc}
-          loading={windLoading && routes.length === 0}
-          routeActive={routes.length > 0}
+          horizonEndUtc={inRouteReview ? routeHorizonEndUtc : horizonEndUtc}
+          loading={windLoading && !inRouteReview}
+          routeActive={inRouteReview}
           leg={playbackLeg}
           playUntilUtc={activeRoute?.eta_utc ?? null}
           distanceNm={playbackDistanceNm}
-          routes={routes}
-          activeModelId={activeModelId}
-          modelLabels={Object.fromEntries(availableModels.map((m) => [m.id, m.label]))}
-          onActiveModel={setActiveModelId}
         />
         <MapLoadOverlay
           kind={mapLoadKind}
           label={mapLoadLabel}
           routeSteps={routeLoading ? routeSteps : undefined}
+          routeModelIds={routeLoading ? Array.from(selected) : undefined}
+          routeModelLabels={modelLabels}
+          windSteps={!routeLoading && mapLoadKind === "wind-initial" ? windSteps : undefined}
           routeWarnings={routeLoading ? routeWarnings : undefined}
           routeError={routeModal === "error"}
+          retryableModelIds={retryableModelIds}
           onRetry={runRoute}
+          onRetryModel={retryModel}
           onEdit={dismissRouteModal}
         />
         {activeError && <div className="map-error-banner">{activeError}</div>}
@@ -1035,13 +1267,13 @@ export default function Home() {
         <ZoomDebugChip
           zoom={mapZoom}
           terrainOn={windNinjaOpt}
-          terrainDisabled={routes.length > 0}
+          terrainDisabled={inRouteReview}
           terrainLibrary={windSeries?.terrain_library ?? null}
           terrainApplied={windSeries?.terrain_applied ?? null}
           terrainLibraryVersion={windSeries?.terrain_library_version ?? null}
           onTerrainToggle={(on) => {
             setWindNinjaOpt(on);
-            if (routes.length > 0) return;
+            if (inRouteReview) return;
             // Bust browse cache so the next fetch reflects the new setting.
             if (activeModelId) {
               browseAbortRefs.current.get(activeModelId)?.abort();
@@ -1069,23 +1301,35 @@ export default function Home() {
           }}
         />
         <WindLegend visible={showWind && !!windSeries} />
-        <div className="forecast-dock">
-          <ForecastPicker
-            routes={routes}
-            models={availableModels}
-            selectedModels={selected}
-            activeModelId={activeModelId}
-            onActiveModel={setActiveModelId}
-            overlayStatus={overlayStatus}
-          />
-          <ForecastDropdown
-            models={availableModels}
-            selected={selected}
-            onToggle={toggleModel}
-            apiUp={apiUp}
-            hasViewport={viewport != null}
-          />
-        </div>
+        {inRouteReview ? (
+          <div className="forecast-dock">
+            <button
+              type="button"
+              className="exit-routing-btn"
+              onClick={exitRouting}
+            >
+              Exit routing
+            </button>
+          </div>
+        ) : (
+          <div className="forecast-dock">
+            <ForecastPicker
+              routes={routes}
+              models={availableModels}
+              selectedModels={selected}
+              activeModelId={activeModelId}
+              onActiveModel={setActiveModelId}
+              overlayStatus={overlayStatus}
+            />
+            <ForecastDropdown
+              models={availableModels}
+              selected={selected}
+              onToggle={toggleModel}
+              apiUp={apiUp}
+              hasViewport={viewport != null}
+            />
+          </div>
+        )}
       </div>
 
       <RouteDetailPanel
