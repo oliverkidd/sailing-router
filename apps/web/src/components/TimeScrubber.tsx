@@ -7,6 +7,8 @@ import type { RouteLeg } from "@/lib/types";
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const FIVE_MIN_MS = 5 * 60 * 1000;
+/** Maneuver-to-maneuver legs shorter than this get forced mid-leg scrub stops. */
+const SHORT_MANEUVER_LEG_MS = 15 * 60 * 1000;
 /** Forecast time advanced per 1s of wall clock while playing at 1x (~20 min/s). */
 const PLAY_RATE_MS_PER_SEC = 20 * 60 * 1000;
 
@@ -20,7 +22,115 @@ function floorHourMs(iso: string): number {
 }
 
 function toIso(ms: number): string {
-  return new Date(ms).toISOString();
+  return new Date(Math.round(ms)).toISOString();
+}
+
+/** Scrub times for maneuvers: turn vertex for tack/gybe, mark node for mark. */
+function maneuverScrubTimesMs(legs: RouteLeg[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < legs.length; i++) {
+    const m = legs[i].maneuver;
+    if (m === "none") continue;
+    if (m === "mark" || i === 0) {
+      out.push(new Date(legs[i].t_utc).getTime());
+    } else {
+      out.push(new Date(legs[i - 1].t_utc).getTime());
+    }
+  }
+  return out;
+}
+
+/** Route start, each maneuver, and route end — bounds of maneuver-to-maneuver legs. */
+function maneuverLegBoundsMs(legs: RouteLeg[]): number[] {
+  const start = new Date(legs[0].t_utc).getTime();
+  const end = new Date(legs[legs.length - 1].t_utc).getTime();
+  const uniq = new Set<number>([start, end, ...maneuverScrubTimesMs(legs)]);
+  return [...uniq].sort((a, b) => a - b);
+}
+
+/**
+ * Two interior touch points at ~⅓ and ~⅔ of [a, b], rounded to whole ms and
+ * forced strictly inside so Date round-trips never collapse to the endpoints.
+ */
+function shortLegInteriorStops(a: number, b: number): number[] {
+  const dur = b - a;
+  if (dur < 3) return [];
+  let t1 = Math.round(a + dur / 3);
+  let t2 = Math.round(a + (2 * dur) / 3);
+  // Keep both strictly between a and b, and distinct from each other.
+  t1 = Math.max(a + 1, Math.min(b - 2, t1));
+  t2 = Math.max(t1 + 1, Math.min(b - 1, t2));
+  return t1 < t2 ? [t1, t2] : [t1];
+}
+
+/**
+ * Discrete scrub stops for the whole route:
+ * - every maneuver-leg <15 min → endpoints + rounded 33% + 66%
+ * - longer legs → endpoints + 5-min grid
+ */
+export function routeScrubStopsMs(legs: RouteLeg[]): number[] {
+  const bounds = maneuverLegBoundsMs(legs);
+  const stops = new Set<number>();
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const a = bounds[i];
+    const b = bounds[i + 1];
+    stops.add(a);
+    stops.add(b);
+    const dur = b - a;
+    if (dur <= 0) continue;
+    if (dur < SHORT_MANEUVER_LEG_MS) {
+      for (const t of shortLegInteriorStops(a, b)) stops.add(t);
+    } else {
+      for (let t = a + FIVE_MIN_MS; t < b; t += FIVE_MIN_MS) {
+        stops.add(t);
+      }
+    }
+  }
+  return [...stops].sort((x, y) => x - y);
+}
+
+/**
+ * Arrow-key step: always walk the precomputed stop list for the whole route
+ * (next/prev stop; speed skips that many stops).
+ */
+export function arrowScrubDeltaMs(
+  legs: RouteLeg[] | null | undefined,
+  curMs: number,
+  direction: 1 | -1,
+  speed: number,
+): number {
+  const defaultDelta = direction * FIVE_MIN_MS * Math.max(1, speed);
+  if (!legs || legs.length < 2) return defaultDelta;
+
+  const stops = routeScrubStopsMs(legs);
+  if (stops.length < 2) return defaultDelta;
+
+  const stepCount = Math.max(1, Math.floor(speed));
+  const cur = Math.round(curMs);
+
+  if (direction > 0) {
+    let idx = -1;
+    for (let i = 0; i < stops.length; i++) {
+      if (stops[i] > cur) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) return 0;
+    const target = stops[Math.min(stops.length - 1, idx + stepCount - 1)];
+    return target - cur;
+  }
+
+  let idx = -1;
+  for (let i = stops.length - 1; i >= 0; i--) {
+    if (stops[i] < cur) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) return 0;
+  const target = stops[Math.max(0, idx - (stepCount - 1))];
+  return target - cur;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -68,6 +178,7 @@ export default function TimeScrubber({
   loading = false,
   routeActive = false,
   leg = null,
+  legs = null,
   playUntilUtc = null,
   distanceNm = 0,
 }: {
@@ -78,6 +189,8 @@ export default function TimeScrubber({
   loading?: boolean;
   routeActive?: boolean;
   leg?: RouteLeg | null;
+  /** Full route legs — used for adaptive arrow-key stepping. */
+  legs?: RouteLeg[] | null;
   /** When set, autoplay stops at this time (e.g. route ETA). */
   playUntilUtc?: string | null;
   distanceNm?: number;
@@ -91,6 +204,8 @@ export default function TimeScrubber({
   const playEndRef = useRef(0);
   const speedRef = useRef(speed);
   speedRef.current = speed;
+  const legsRef = useRef(legs);
+  legsRef.current = legs;
 
   const startMs = routeActive
     ? new Date(horizonStartUtc).getTime()
@@ -105,6 +220,10 @@ export default function TimeScrubber({
   );
   curMsRef.current = curMs;
   const { day, hour } = formatDayHour(curMs, routeActive, playing);
+  const etaLabel =
+    routeActive && playUntilUtc
+      ? formatDayHour(new Date(playUntilUtc).getTime(), true)
+      : null;
   const atStart = curMs <= startMs;
   const atEnd = curMs >= endMs;
   const playEndMs =
@@ -170,8 +289,14 @@ export default function TimeScrubber({
         return;
       }
       e.preventDefault();
-      const delta = FIVE_MIN_MS * speedRef.current;
-      stepRef.current(e.key === "ArrowLeft" ? -delta : delta);
+      const dir: 1 | -1 = e.key === "ArrowLeft" ? -1 : 1;
+      const delta = arrowScrubDeltaMs(
+        legsRef.current,
+        curMsRef.current,
+        dir,
+        speedRef.current,
+      );
+      stepRef.current(delta);
     };
 
     window.addEventListener("keydown", onKey);
@@ -233,6 +358,11 @@ export default function TimeScrubber({
             {loading && <span className="time-nav-spin" aria-hidden />}
             {loading ? "Loading forecast…" : `${hour} · ${day}`}
           </div>
+          {!loading && etaLabel && (
+            <div className="time-nav-eta">
+              Finish {etaLabel.hour} · {etaLabel.day}
+            </div>
+          )}
           {routeActive && (
             <div className="time-nav-play-row">
               <button

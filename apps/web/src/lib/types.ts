@@ -48,12 +48,36 @@ export interface ModelPreset {
   color: string;
 }
 
+export type RouterParamsOverride = Record<string, number>;
+
 export interface RouteRequest {
   course: Course;
   boat: BoatConfig;
   model_ids: string[];
   time_step_s: number;
   heading_step_deg: number;
+  router_params?: RouterParamsOverride | null;
+}
+
+export type TuningGroup = "router" | "boat" | "course" | "request";
+
+export interface TuningField {
+  name: string;
+  category: string;
+  label: string;
+  description: string;
+  default: number | null;
+  min: number | null;
+  max: number | null;
+  step: number;
+  group: TuningGroup;
+  nullable?: boolean;
+}
+
+export interface TuningSchemaResponse {
+  categories: string[];
+  fields: TuningField[];
+  router_defaults: Record<string, number>;
 }
 
 export interface RouteLeg {

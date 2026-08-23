@@ -179,6 +179,13 @@ export function emptyCourse(departUtc: string): Course {
   };
 }
 
+/** Keep mark.name in lockstep with panel/map order (M1…Mn). */
+export function withSequentialMarkNames<T extends { name?: string | null }>(
+  marks: T[],
+): T[] {
+  return marks.map((m, i) => ({ ...m, name: `M${i + 1}` }));
+}
+
 export interface LegAtTime {
   position: LatLon;
   heading: number | null;

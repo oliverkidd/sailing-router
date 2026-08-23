@@ -8,8 +8,6 @@ export const DEM_COVERAGE_LAYER_ID = "dem-coverage-outline";
 /** Enable 3D mesh at this zoom and above (chart still flat below). */
 export const TERRAIN_MESH_MIN_ZOOM = 12;
 export const TERRAIN_EXAGGERATION = 1.35;
-/** Hide screen-space wind canvas when pitch exceeds this (drape mismatch). */
-export const WIND_HIDE_PITCH_DEG = 2;
 
 export interface DemBounds {
   lon_min: number;

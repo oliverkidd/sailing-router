@@ -11,9 +11,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 LatLon = tuple[float, float]
 
@@ -70,12 +70,90 @@ class ModelPreset(BaseModel):
     color: str
 
 
+class RouterParamsOverride(BaseModel):
+    """Partial RouterParams — omitted fields keep engine defaults."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    time_step_s: int | None = Field(None, ge=10, le=3600)
+    heading_step_deg: float | None = Field(None, gt=0, le=45)
+    sector_width_deg: float | None = Field(None, gt=0, le=45)
+    cluster_cell_deg: float | None = Field(None, gt=0, le=1)
+    max_frontier: int | None = Field(None, ge=10, le=20000)
+    max_steps_per_leg: int | None = Field(None, ge=10, le=20000)
+    maneuver_prune_nm: float | None = Field(None, ge=0, le=10)
+    depth_safety_margin_m: float | None = Field(None, ge=0, le=20)
+    no_progress_steps: int | None = Field(None, ge=1, le=2000)
+    max_consecutive_maneuvers: int | None = Field(None, ge=0, le=200)
+    maneuver_overflow_nm: float | None = Field(None, ge=0, le=20)
+    min_bsp_fraction_of_beat: float | None = Field(None, ge=0, le=1)
+    max_commit_s: float | None = Field(None, ge=10, le=14400)
+    wind_delta_twd_deg: float | None = Field(None, ge=0, le=180)
+    wind_delta_tws_kn: float | None = Field(None, ge=0, le=30)
+    mark_probe_nm: float | None = Field(None, ge=0.05, le=10)
+    near_mark_nm: float | None = Field(None, ge=0.05, le=10)
+    fan_half_max_deg: float | None = Field(None, ge=5, le=180)
+    fan_probe_nm_max: float | None = Field(None, ge=0.05, le=5)
+    fan_probe_nm_min: float | None = Field(None, ge=0.02, le=5)
+    fan_probe_mark_frac: float | None = Field(None, ge=0.05, le=1)
+    same_heading_bonus_s: float | None = Field(None, ge=0, le=60)
+    same_heading_band_deg: float | None = Field(None, ge=0, le=45)
+    vmg_hysteresis_deg: float | None = Field(None, ge=0, le=90)
+    course_change_free_deg: float | None = Field(None, ge=0, le=90)
+    course_change_moderate_deg: float | None = Field(None, ge=0, le=90)
+    course_change_tws_scale_kn: float | None = Field(None, ge=1, le=50)
+    course_change_heavy_frac_small: float | None = Field(None, ge=0, le=1)
+    course_change_heavy_frac_large: float | None = Field(None, ge=0, le=1)
+    course_change_mild_frac: float | None = Field(None, ge=0, le=1)
+    downwind_twa_gate_deg: float | None = Field(None, ge=0, le=180)
+    heading_ref_max_err_deg: float | None = Field(None, ge=0, le=180)
+    opposite_maneuver_course_err_deg: float | None = Field(None, ge=0, le=180)
+    opposite_tack_twa_slack_deg: float | None = Field(None, ge=0, le=45)
+    opposite_gybe_twa_slack_deg: float | None = Field(None, ge=0, le=45)
+    opposite_maneuver_heading_spread_deg: float | None = Field(None, ge=0, le=180)
+    rethink_heading_vs_bearing_deg: float | None = Field(None, ge=0, le=90)
+    layline_stop_deg: float | None = Field(None, ge=0, le=180)
+    past_layline_deg: float | None = Field(None, ge=0, le=180)
+    light_air_twd_tws_kn: float | None = Field(None, ge=0, le=20)
+    prune_floor_bsp_kn: float | None = Field(None, ge=0.05, le=10)
+    soft_cost_s_per_nm: float | None = Field(None, ge=0, le=3600)
+    wind_epoch_commit_frac: float | None = Field(None, ge=0, le=2)
+    commit_arrival_buffer_s: float | None = Field(None, ge=0, le=600)
+    stall_rem_factor: float | None = Field(None, ge=0, le=20)
+    stall_rem_offset: int | None = Field(None, ge=0, le=500)
+    geo_hit_retry_fraction: float | None = Field(None, ge=0, le=1)
+    short_commit_min_s: float | None = Field(None, ge=5, le=600)
+    creep_commit_min_s: float | None = Field(None, ge=5, le=600)
+    finish_snap_radius_nm: float | None = Field(None, ge=0.02, le=2)
+    mark_arrival_break_nm: float | None = Field(None, ge=0.01, le=1)
+
+
 class RouteRequest(BaseModel):
     course: Course
     boat: BoatConfig
     model_ids: list[str]
     time_step_s: int = 300
     heading_step_deg: float = 7.5
+    router_params: RouterParamsOverride | None = None
+
+
+class TuningField(BaseModel):
+    name: str
+    category: str
+    label: str
+    description: str
+    default: float | int | None
+    min: float | None = None
+    max: float | None = None
+    step: float = 1
+    group: Literal["router", "boat", "course", "request"]
+    nullable: bool = False
+
+
+class TuningSchemaResponse(BaseModel):
+    categories: list[str]
+    fields: list[TuningField]
+    router_defaults: dict[str, Any]
 
 
 class RouteLeg(BaseModel):

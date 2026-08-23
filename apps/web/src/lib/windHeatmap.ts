@@ -1,14 +1,38 @@
-/** Viewport-aligned wind speed heatmap (canvas raster). */
+/** Geo-referenced wind speed heatmap (canvas raster, painted once per slice). */
 
 import type maplibregl from "maplibre-gl";
 import { windScale } from "./colors";
 import type { MeteoGrid } from "./meteoGrid";
-import { sampleGrid } from "./meteoGrid";
 
 // MapLibre renders power-of-2 square canvas sources as opaque black quads (known bug).
 // Keep each axis odd / non-power-of-2.
 const MAX_DIM = 1023;
 const MIN_DIM = 63;
+const UPSAMPLE_MIN = 2;
+const UPSAMPLE_MAX = 6;
+/** Baked layer opacity so terrain drape cannot double-apply raster-opacity. */
+const PIXEL_ALPHA = 118; // 235 * 0.5
+/** Extra raster-opacity while the terrain mesh is on (drape over-saturates at 1). */
+const DRAPED_OPACITY = 0.45;
+const MS_TO_KN = 1.943844;
+
+const LUT_MAX_KN = 60;
+const LUT_STEPS = LUT_MAX_KN * 10 + 1; // 0.1 kn
+const COLOR_LUT = (() => {
+  const lut = new Uint8Array(LUT_STEPS * 3);
+  for (let i = 0; i < LUT_STEPS; i++) {
+    const { rgb } = windScale(i / 10);
+    lut[i * 3] = rgb[0];
+    lut[i * 3 + 1] = rgb[1];
+    lut[i * 3 + 2] = rgb[2];
+  }
+  return lut;
+})();
+
+function upsampleForGrid(nlat: number, nlon: number): number {
+  const cells = Math.max(nlat, nlon, 1);
+  return Math.max(UPSAMPLE_MIN, Math.min(UPSAMPLE_MAX, Math.floor(MAX_DIM / cells)));
+}
 
 function oddNonPow2(n: number): number {
   let x = Math.max(MIN_DIM, Math.min(MAX_DIM, Math.round(n)));
@@ -17,11 +41,30 @@ function oddNonPow2(n: number): number {
   return Math.max(MIN_DIM, x);
 }
 
-function inGrid(grid: MeteoGrid, lat: number, lon: number): boolean {
-  const { lat0, lon0, dlat, dlon, nlat, nlon } = grid;
-  const latMax = lat0 + dlat * (nlat - 1);
-  const lonMax = lon0 + dlon * (nlon - 1);
-  return lat >= lat0 && lat <= latMax && lon >= lon0 && lon <= lonMax;
+/** Web-Mercator Y (unitless) so canvas rows match MapLibre's raster drape. */
+function mercatorY(lat: number): number {
+  const s = Math.min(0.9999, Math.max(-0.9999, Math.sin((lat * Math.PI) / 180)));
+  return 0.5 * Math.log((1 + s) / (1 - s));
+}
+
+function latFromMercatorY(y: number): number {
+  return (Math.atan(Math.sinh(y)) * 180) / Math.PI;
+}
+
+function gridExtent(grid: MeteoGrid): {
+  latMin: number;
+  latMax: number;
+  lonMin: number;
+  lonMax: number;
+} {
+  const lat1 = grid.lat0 + grid.dlat * (grid.nlat - 1);
+  const lon1 = grid.lon0 + grid.dlon * (grid.nlon - 1);
+  return {
+    latMin: Math.min(grid.lat0, lat1),
+    latMax: Math.max(grid.lat0, lat1),
+    lonMin: Math.min(grid.lon0, lon1),
+    lonMax: Math.max(grid.lon0, lon1),
+  };
 }
 
 export class WindHeatmapLayer {
@@ -61,7 +104,7 @@ export class WindHeatmapLayer {
           id: this.id,
           type: "raster",
           source: this.id,
-          paint: { "raster-opacity": 0.5, "raster-fade-duration": 0 },
+          paint: { "raster-opacity": 1, "raster-fade-duration": 0 },
         },
         beforeId,
       );
@@ -69,20 +112,31 @@ export class WindHeatmapLayer {
     this.clearCanvas();
   }
 
-  private clearCanvas() {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    const src = this.map?.getSource(this.id) as maplibregl.CanvasSource | undefined;
-    src?.play();
+  /** Upload the canvas once, then freeze the source so MapLibre stops re-reading it every frame. */
+  private commit() {
+    const map = this.map;
+    const src = map?.getSource(this.id) as maplibregl.CanvasSource | undefined;
+    if (!src || !map) return;
+    src.play();
+    map.triggerRepaint();
+    requestAnimationFrame(() => {
+      try {
+        src.pause();
+      } catch {
+        /* source may already be gone */
+      }
+    });
   }
 
-  /** Size canvas to the map's CSS pixel footprint (odd non-pow2 per axis). */
-  private resizeToMap() {
-    const map = this.map;
-    if (!map) return;
-    const cssW = map.getContainer().clientWidth;
-    const cssH = map.getContainer().clientHeight;
-    const w = oddNonPow2(cssW);
-    const h = oddNonPow2(cssH);
+  private clearCanvas() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.commit();
+  }
+
+  private resizeForGrid(grid: MeteoGrid) {
+    const up = upsampleForGrid(grid.nlat, grid.nlon);
+    const w = oddNonPow2(grid.nlon * up);
+    const h = oddNonPow2(grid.nlat * up);
     if (w !== this.width || h !== this.height) {
       this.width = w;
       this.height = h;
@@ -91,20 +145,16 @@ export class WindHeatmapLayer {
     }
   }
 
-  private setViewportCoordinates() {
+  private setGridCoordinates(grid: MeteoGrid) {
     const map = this.map;
     if (!map) return;
-    const b = map.getBounds();
-    const west = b.getWest();
-    const south = b.getSouth();
-    const east = b.getEast();
-    const north = b.getNorth();
+    const { latMin, latMax, lonMin, lonMax } = gridExtent(grid);
     const src = map.getSource(this.id) as maplibregl.CanvasSource | undefined;
     src?.setCoordinates([
-      [west, north],
-      [east, north],
-      [east, south],
-      [west, south],
+      [lonMin, latMax],
+      [lonMax, latMax],
+      [lonMax, latMin],
+      [lonMin, latMin],
     ]);
   }
 
@@ -114,16 +164,8 @@ export class WindHeatmapLayer {
       this.clearCanvas();
       return;
     }
-    this.resizeToMap();
-    this.setViewportCoordinates();
-    this.render();
-  }
-
-  /** Re-paint after pan/zoom so every screen pixel matches click sampling. */
-  syncViewport() {
-    if (!this.grid || !this.map) return;
-    this.resizeToMap();
-    this.setViewportCoordinates();
+    this.resizeForGrid(grid);
+    this.setGridCoordinates(grid);
     this.render();
   }
 
@@ -137,44 +179,95 @@ export class WindHeatmapLayer {
 
     const w = this.width;
     const h = this.height;
-    const cssW = map.getContainer().clientWidth;
-    const cssH = map.getContainer().clientHeight;
-    const sx = cssW / w;
-    const sy = cssH / h;
+    const { latMin, latMax, lonMin, lonMax } = gridExtent(grid);
+    const lonSpan = lonMax - lonMin;
+    const mercNorth = mercatorY(latMax);
+    const mercSouth = mercatorY(latMin);
+    const mercSpan = mercSouth - mercNorth;
 
     const img = this.ctx.createImageData(w, h);
     const data = img.data;
+    const lut = COLOR_LUT;
+    const t0 = performance.now();
+    const { lat0, lon0, dlat, dlon, nlat, nlon, u, v, speed_kn } = grid;
 
-    for (let py = 0; py < h; py++) {
+    if (nlat < 2 || nlon < 2) {
+      const speed = speed_kn[0] ?? 0;
+      const idx = Math.max(0, Math.min(LUT_STEPS - 1, Math.round(speed * 10))) * 3;
+      for (let i = 0; i < w * h; i++) {
+        const p = i * 4;
+        data[p] = lut[idx];
+        data[p + 1] = lut[idx + 1];
+        data[p + 2] = lut[idx + 2];
+        data[p + 3] = PIXEL_ALPHA;
+      }
+    } else {
+      const nlonMax = nlon - 1.001;
+      const nlatMax = nlat - 1.001;
+      const j0 = new Int32Array(w);
+      const j1 = new Int32Array(w);
+      const fx = new Float64Array(w);
       for (let px = 0; px < w; px++) {
-        const i = (py * w + px) * 4;
-        const lngLat = map.unproject([(px + 0.5) * sx, (py + 0.5) * sy]);
-        const lat = lngLat.lat;
-        const lon = lngLat.lng;
+        const lon = lonMin + ((px + 0.5) / w) * lonSpan;
+        const fj = Math.max(0, Math.min(nlonMax, (lon - lon0) / dlon));
+        const ja = Math.floor(fj);
+        j0[px] = ja;
+        j1[px] = Math.min(ja + 1, nlon - 1);
+        fx[px] = fj - ja;
+      }
 
-        if (!inGrid(grid, lat, lon)) {
-          data[i + 3] = 0;
-          continue;
+      for (let py = 0; py < h; py++) {
+        const lat = latFromMercatorY(mercNorth + ((py + 0.5) / h) * mercSpan);
+        const fi = Math.max(0, Math.min(nlatMax, (lat - lat0) / dlat));
+        const i0 = Math.floor(fi);
+        const i1 = Math.min(i0 + 1, nlat - 1);
+        const fy = fi - i0;
+        const omfy = 1 - fy;
+        const row0 = i0 * nlon;
+        const row1 = i1 * nlon;
+        const outRow = py * w;
+        for (let px = 0; px < w; px++) {
+          const f = fx[px];
+          const omf = 1 - f;
+          const ja = j0[px];
+          const jb = j1[px];
+          const su =
+            omfy * (omf * (u[row0 + ja] ?? 0) + f * (u[row0 + jb] ?? 0)) +
+            fy * (omf * (u[row1 + ja] ?? 0) + f * (u[row1 + jb] ?? 0));
+          const sv =
+            omfy * (omf * (v[row0 + ja] ?? 0) + f * (v[row0 + jb] ?? 0)) +
+            fy * (omf * (v[row1 + ja] ?? 0) + f * (v[row1 + jb] ?? 0));
+          const speed = Math.hypot(su, sv) * MS_TO_KN;
+          const idx = Math.max(0, Math.min(LUT_STEPS - 1, Math.round(speed * 10))) * 3;
+          const i = (outRow + px) * 4;
+          data[i] = lut[idx];
+          data[i + 1] = lut[idx + 1];
+          data[i + 2] = lut[idx + 2];
+          data[i + 3] = PIXEL_ALPHA;
         }
-
-        const { speed } = sampleGrid(grid, lat, lon);
-        const { rgb } = windScale(speed);
-        data[i] = rgb[0];
-        data[i + 1] = rgb[1];
-        data[i + 2] = rgb[2];
-        data[i + 3] = 235;
       }
     }
 
     this.ctx.putImageData(img, 0, 0);
-    const src = map.getSource(this.id) as maplibregl.CanvasSource | undefined;
-    src?.play();
+    this.commit();
+    if (process.env.NODE_ENV === "development") {
+      console.info("[wind] heatmap paint", {
+        w,
+        h,
+        ms: Math.round(performance.now() - t0),
+      });
+    }
   }
 
   setVisible(map: maplibregl.Map, visible: boolean) {
     if (!map.getLayer(this.id)) return;
     map.setLayoutProperty(this.id, "visibility", visible ? "visible" : "none");
-    if (!visible) this.clearCanvas();
+  }
+
+  /** Cheap paint-property flip — no canvas repaint. Counteracts drape over-saturation. */
+  setDraped(map: maplibregl.Map, draped: boolean) {
+    if (!map.getLayer(this.id)) return;
+    map.setPaintProperty(this.id, "raster-opacity", draped ? DRAPED_OPACITY : 1);
   }
 
   destroy(map: maplibregl.Map) {

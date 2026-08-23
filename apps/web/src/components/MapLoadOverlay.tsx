@@ -1,7 +1,7 @@
 "use client";
 
 import RouteProgress from "./RouteProgress";
-import type { RouteProgressStep } from "@/lib/types";
+import type { ModelRoute, RouteProgressStep } from "@/lib/types";
 
 export type MapLoadKind = "wind-initial" | "wind-hour" | "route";
 
@@ -16,9 +16,11 @@ export default function MapLoadOverlay({
   routeWarnings,
   routeError,
   retryableModelIds = [],
+  completedRoutes,
   onRetry,
   onRetryModel,
   onEdit,
+  onView,
 }: {
   kind: MapLoadKind | null;
   label: string;
@@ -30,9 +32,11 @@ export default function MapLoadOverlay({
   routeWarnings?: string[];
   routeError?: boolean;
   retryableModelIds?: string[];
+  completedRoutes?: ModelRoute[];
   onRetry?: () => void;
   onRetryModel?: (modelId: string) => void;
   onEdit?: () => void;
+  onView?: () => void;
 }) {
   if (!kind) return null;
 
@@ -46,7 +50,7 @@ export default function MapLoadOverlay({
       className={`map-load-overlay${light ? " map-load-overlay--light" : ""}`}
       role="status"
       aria-live="polite"
-      aria-busy={!routeError}
+      aria-busy={!routeError && !completedRoutes?.length}
     >
       <div className="map-load-bar" aria-hidden />
       {showRouteProgress && (
@@ -58,9 +62,11 @@ export default function MapLoadOverlay({
             warnings={routeWarnings}
             showActions={routeError}
             retryableModelIds={retryableModelIds}
+            completedRoutes={completedRoutes}
             onRetry={routeError ? onRetry : undefined}
             onRetryModel={onRetryModel}
             onEdit={routeError ? onEdit : undefined}
+            onView={onView}
           />
         </div>
       )}

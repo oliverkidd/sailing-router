@@ -51,6 +51,7 @@ def wind_area(
     end_utc: str | None = None,
     zoom: float | None = None,
     terrain: bool = True,
+    corridor: bool = False,
 ) -> dict:
     """Return a multi-hour wind series for the viewport (WindProvider path).
 
@@ -58,6 +59,7 @@ def wind_area(
     forcing cache and returns a zoom-tiered display window (rendered fully).
 
     ``terrain`` toggles WindNinja terrain-response downscaling (default on).
+    ``corridor`` skips browse window/region pad — use for course-tight route review.
     """
     bbox, start, end = _parse_window(
         lat_min, lon_min, lat_max, lon_max, start_utc, end_utc
@@ -65,7 +67,8 @@ def wind_area(
 
     etag_src = (
         f"{model_id}|{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}|"
-        f"{start.isoformat()}|{end.isoformat()}|{zoom}|t={int(terrain)}"
+        f"{start.isoformat()}|{end.isoformat()}|{zoom}|t={int(terrain)}|"
+        f"c={int(corridor)}"
     )
     etag = hashlib.sha1(etag_src.encode()).hexdigest()[:16]
     response.headers["ETag"] = f'"{etag}"'
@@ -79,6 +82,7 @@ def wind_area(
             end=end,
             zoom=zoom,
             enable_terrain=terrain,
+            corridor=corridor,
         )
     except ForecastRateLimitError as exc:
         response.headers["Cache-Control"] = "no-store"
@@ -112,6 +116,7 @@ def wind_area_stream(
     end_utc: str | None = None,
     zoom: float | None = None,
     terrain: bool = True,
+    corridor: bool = False,
 ) -> StreamingResponse:
     """SSE stream of wind-area stages, then a final result event with the series."""
     bbox, start, end = _parse_window(
@@ -131,6 +136,7 @@ def wind_area_stream(
                 end=end,
                 zoom=zoom,
                 enable_terrain=terrain,
+                corridor=corridor,
                 on_progress=on_progress,
             )
             if payload is None:

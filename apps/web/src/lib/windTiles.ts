@@ -10,6 +10,30 @@ import type { MapBounds } from "./mapOverlays";
 
 export const FORECAST_MAX_SPAN_MI = 300;
 
+/** Mirrors services/api/app/wind/zoom_tiers.py tier_for_zoom. */
+export type ZoomTierName = "coarse" | "mid" | "fine" | "ultra";
+
+const TIER_RANK: Record<ZoomTierName, number> = {
+  coarse: 0,
+  mid: 1,
+  fine: 2,
+  ultra: 3,
+};
+
+/** Map MapLibre zoom → display tier name (must match server). */
+export function tierForZoom(zoom: number | null | undefined): ZoomTierName {
+  const z = zoom == null || !Number.isFinite(zoom) ? 5 : zoom;
+  if (z <= 6) return "coarse";
+  if (z <= 9) return "mid";
+  if (z <= 12) return "fine";
+  return "ultra";
+}
+
+export function tierRank(tier: string | null | undefined): number {
+  if (tier && tier in TIER_RANK) return TIER_RANK[tier as ZoomTierName];
+  return -1;
+}
+
 /** Haversine distance in miles between two lat/lon points. */
 export function haversineMiles(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 3958.8;
@@ -61,18 +85,18 @@ export function bboxAreaDeg2(b: MapBounds): number {
 }
 
 /**
- * True when the cached display window is much larger than the current viewport
- * AND a finer zoom tier is needed. Forcing cache is source-native (independent
- * of zoom); this only triggers a display re-fetch for density.
+ * True when the current zoom needs a finer display tier than the cached series.
+ * Panning inside the same tier must NOT force a replace (ultra pad windows are
+ * always much larger than the viewport, so an area-ratio check was wrong).
  */
 export function regionNeedsDenserReplace(
-  cached: MapBounds,
-  next: MapBounds,
-  areaRatio = 0.25,
+  cachedTier: string | null | undefined,
+  zoom: number | null | undefined,
 ): boolean {
-  const a = bboxAreaDeg2(cached);
-  if (a <= 0) return false;
-  return bboxAreaDeg2(next) / a < areaRatio;
+  const need = tierRank(tierForZoom(zoom));
+  const have = tierRank(cachedTier);
+  if (have < 0) return true;
+  return need > have;
 }
 
 /** @deprecated Server pads once; prefer sending the raw viewport. */

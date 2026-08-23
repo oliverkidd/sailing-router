@@ -27,6 +27,7 @@ from .downscaled import DownscaledWindField
 from .terrain_library import (
     LIBRARY_VERSION,
     library_available,
+    library_meta_for_bbox,
     load_library_for_bbox,
 )
 from .zoom_tiers import WIND_CANON_RES_DEG, display_window, tier_for_zoom
@@ -37,8 +38,10 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 
 _provider: WindProvider | None = None
 
-# Short-TTL LRU of materialised display grids.
-_WINDOW_LRU_MAX = 24
+# Short-TTL LRU of materialised per-hour display grids.
+# Keyed by window+grid+hour (not the request [start,end]) so scrubbing
+# reuses hours already downscaled for an overlapping prefetch window.
+_WINDOW_LRU_MAX = 96
 _WINDOW_TTL_S = 900
 _window_lru: OrderedDict[str, tuple[float, WindField]] = OrderedDict()
 _window_guard = threading.Lock()
@@ -65,7 +68,51 @@ def _window_put(key: str, field: WindField) -> None:
             _window_lru.popitem(last=False)
 
 
+def _hour_cache_key(base: str, hour_epoch: float) -> str:
+    return f"{base}|h{int(round(hour_epoch))}"
+
+
+def _slice_field_times(
+    field: DownscaledWindField | WindField, indices: list[int]
+) -> DownscaledWindField | WindField:
+    """Return a field containing only the selected time indices."""
+    if not indices:
+        raise ValueError("indices must be non-empty")
+    idx = np.asarray(indices, dtype=int)
+    if isinstance(field, DownscaledWindField):
+        forcing = field.forcing
+        sliced = WindField.build(
+            forcing.model_id,
+            forcing.times[idx],
+            forcing.lats,
+            forcing.lons,
+            forcing.u10[idx],
+            forcing.v10[idx],
+        )
+        return DownscaledWindField(
+            forcing=sliced,
+            library=field.library,
+            operator_version=field.operator_version,
+        )
+    return WindField.build(
+        field.model_id,
+        field.times[idx],
+        field.lats,
+        field.lons,
+        field.u10[idx],
+        field.v10[idx],
+    )
+
+
 def _emit(on_progress: ProgressCallback | None, event: dict[str, Any]) -> None:
+    if event.get("type") == "stage" and event.get("status") == "done":
+        logger.info(
+            "wind stage %s ms=%s cache_hit=%s terrain_library=%s",
+            event.get("key"),
+            event.get("ms"),
+            event.get("cache_hit"),
+            event.get("terrain_library"),
+        )
     if on_progress is not None:
         on_progress(event)
 
@@ -146,12 +193,30 @@ class WindProvider:
         end: datetime,
         zoom: float | None = None,
         enable_terrain: bool = True,
+        corridor: bool = False,
         on_progress: ProgressCallback | None = None,
     ) -> dict | None:
-        """Multi-hour display payload at the zoom-tier resolution/window."""
-        tier = tier_for_zoom(zoom)
-        window = display_window(viewport, zoom)
-        overview = overview_for_zoom(zoom)
+        """Multi-hour display payload at the zoom-tier resolution/window.
+
+        corridor=True: treat viewport as an exact course corridor — no browse
+        window pad, no region_bbox snap. Uses fine display density.
+        """
+        if corridor:
+            # Fine tier density without coarse +2° pad (zoom=None → coarse).
+            tier = tier_for_zoom(11.0)
+            window = BBox(
+                lat_min=round(viewport.lat_min, 4),
+                lon_min=round(viewport.lon_min, 4),
+                lat_max=round(viewport.lat_max, 4),
+                lon_max=round(viewport.lon_max, 4),
+            )
+            overview = overview_for_zoom(11.0)
+            pad_region = False
+        else:
+            tier = tier_for_zoom(zoom)
+            window = display_window(viewport, zoom)
+            overview = overview_for_zoom(zoom)
+            pad_region = True
         field = self.downscaled_field(
             model_id,
             window,
@@ -160,6 +225,7 @@ class WindProvider:
             enable_terrain=enable_terrain,
             overview=overview,
             on_progress=on_progress,
+            pad_region=pad_region,
         )
         if field is None:
             return None
@@ -184,9 +250,10 @@ class WindProvider:
         elif not enable_terrain:
             if library_available():
                 try:
-                    peek = load_library_for_bbox(window, overview=max(16, overview))
+                    peek = library_meta_for_bbox(window)
                     if peek is not None:
-                        src = (peek.source or "").lower()
+                        src_raw, lib_ver = peek
+                        src = (src_raw or "").lower()
                         terrain_library = (
                             "windninja"
                             if src == "windninja"
@@ -194,25 +261,70 @@ class WindProvider:
                             if src == "identity"
                             else src or "unknown"
                         )
-                        lib_ver = peek.version
                 except Exception:  # noqa: BLE001
                     terrain_library = "none"
             else:
                 terrain_library = "none"
 
         terrain_tag = "t1" if enable_terrain else "t0"
-        cache_key = (
-            f"{model_id}|{window.key()}|{nlat}x{nlon}|{start.isoformat()}|"
-            f"{end.isoformat()}|{lib_ver}|{op.OPERATOR_VERSION}|{tier.name}|"
-            f"{terrain_tag}|o{overview}"
+        corridor_tag = "c1" if corridor else "c0"
+        base_key = (
+            f"{model_id}|{window.key()}|{nlat}x{nlon}|{lib_ver}|"
+            f"{op.OPERATOR_VERSION}|{tier.name}|{terrain_tag}|o{overview}|"
+            f"{corridor_tag}"
         )
+        start_epoch = start.timestamp()
+        end_epoch = end.timestamp()
+
+        # Hours present on the forcing field that fall inside the request window.
+        needed: list[tuple[int, float]] = []
+        for ki, te in enumerate(field.times):
+            te_f = float(te)
+            if start_epoch - 1 <= te_f <= end_epoch + 1:
+                needed.append((ki, te_f))
+
         _emit(on_progress, {"type": "stage", "key": "regrid", "status": "start"})
         t2 = time.perf_counter()
-        grid = _window_get(cache_key)
-        cache_hit = grid is not None
-        if grid is None:
+        cached_hours: dict[float, WindField] = {}
+        miss_indices: list[int] = []
+        miss_epochs: list[float] = []
+        for ki, te_f in needed:
+            hit = _window_get(_hour_cache_key(base_key, te_f))
+            if hit is not None:
+                cached_hours[te_f] = hit
+            else:
+                miss_indices.append(ki)
+                miss_epochs.append(te_f)
+
+        if miss_indices:
+            sliced = _slice_field_times(field, miss_indices)
+            fresh = sliced.regrid(lats, lons)
+            for mi, te_f in enumerate(miss_epochs):
+                single = WindField.build(
+                    fresh.model_id,
+                    fresh.times[mi : mi + 1],
+                    fresh.lats,
+                    fresh.lons,
+                    fresh.u10[mi : mi + 1],
+                    fresh.v10[mi : mi + 1],
+                )
+                _window_put(_hour_cache_key(base_key, te_f), single)
+                cached_hours[te_f] = single
+
+        hour_fields = [cached_hours[te_f] for _, te_f in needed]
+        hits = len(needed) - len(miss_indices)
+
+        if not hour_fields:
+            # No overlapping hours — fall back to a full regrid of whatever we have.
             grid = field.regrid(lats, lons)
-            _window_put(cache_key, grid)
+            cache_hit = False
+        else:
+            grid = (
+                hour_fields[0]
+                if len(hour_fields) == 1
+                else WindField.concat_time(hour_fields)
+            )
+            cache_hit = hits == len(hour_fields)
         _emit(
             on_progress,
             {
@@ -221,6 +333,8 @@ class WindProvider:
                 "status": "done",
                 "ms": round((time.perf_counter() - t2) * 1000, 1),
                 "cache_hit": cache_hit,
+                "hours_hit": hits,
+                "hours_miss": len(miss_indices),
             },
         )
 

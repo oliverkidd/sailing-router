@@ -307,6 +307,9 @@ def _resample_ascii_to_latlon(
     src_crs: str,
     lats: np.ndarray,
     lons: np.ndarray,
+    *,
+    fill_value: float = REF_SPEED_MPS,
+    src_nodata: float | None = None,
 ) -> np.ndarray:
     """Warp a projected ASCII grid onto the ascending lat/lon lattice."""
     from rasterio.transform import Affine, from_bounds  # noqa: PLC0415
@@ -334,6 +337,11 @@ def _resample_ascii_to_latlon(
         nlon,
         nlat,
     )
+    nodata = (
+        float(header.get("nodata_value", -9999))
+        if src_nodata is None
+        else float(src_nodata)
+    )
     reproject(
         source=data.astype(np.float32),
         destination=dst,
@@ -342,14 +350,57 @@ def _resample_ascii_to_latlon(
         dst_transform=dst_transform,
         dst_crs="EPSG:4326",
         resampling=Resampling.bilinear,
-        src_nodata=float(header.get("nodata_value", -9999)),
+        src_nodata=nodata,
         dst_nodata=np.nan,
     )
     if lats[0] < lats[-1]:
         dst = dst[::-1, :]
-    # Fill any nodata with 1.0× reference (neutral speedup later via clip)
-    out = np.where(np.isfinite(dst), dst, REF_SPEED_MPS).astype(np.float32)
+    out = np.where(np.isfinite(dst), dst, fill_value).astype(np.float32)
     return out
+
+
+def _resample_angle_ascii_to_latlon(
+    data: np.ndarray,
+    header: dict,
+    src_crs: str,
+    lats: np.ndarray,
+    lons: np.ndarray,
+    *,
+    direction_deg: float,
+) -> np.ndarray:
+    """Warp an angular ASCII grid using wrap-safe sin/cos bilinear resampling.
+
+    WindNinja ``ang`` fields are degrees in [0, 360). Bilinearly resampling raw
+    degrees across the 0/360 wrap (e.g. north sector) interpolates 359° with 1°
+    toward ~180° — garbage deflection. Resample unit-vector components instead.
+    """
+    nodata = float(header.get("nodata_value", -9999))
+    ang = np.asarray(data, dtype=np.float64)
+    valid = np.isfinite(ang) & (ang != nodata)
+    fill_rad = math.radians(float(direction_deg))
+    rad = np.where(valid, np.radians(ang), fill_rad)
+    sin_src = np.sin(rad).astype(np.float32)
+    cos_src = np.cos(rad).astype(np.float32)
+    # Components are in [-1, 1]; disable nodata masking during warp.
+    sin_dst = _resample_ascii_to_latlon(
+        sin_src,
+        header,
+        src_crs,
+        lats,
+        lons,
+        fill_value=math.sin(fill_rad),
+        src_nodata=-1.0e30,
+    )
+    cos_dst = _resample_ascii_to_latlon(
+        cos_src,
+        header,
+        src_crs,
+        lats,
+        lons,
+        fill_value=math.cos(fill_rad),
+        src_nodata=-1.0e30,
+    )
+    return np.degrees(np.arctan2(sin_dst, cos_dst)).astype(np.float32)
 
 
 def _bake_tile_with_windninja(
@@ -392,7 +443,14 @@ def _bake_tile_with_windninja(
                 ang = list(out_dir.glob("*ang*.asc"))
                 if ang:
                     adata, ahdr = _read_ascii_grid(ang[0])
-                    adata = _resample_ascii_to_latlon(adata, ahdr, dem_crs, lats, lons)
+                    adata = _resample_angle_ascii_to_latlon(
+                        adata,
+                        ahdr,
+                        dem_crs,
+                        lats,
+                        lons,
+                        direction_deg=direction,
+                    )
                     deflection[s, day_i] = ((adata - direction + 180) % 360) - 180
                 ok_n += 1
                 logger.info(

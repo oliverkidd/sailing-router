@@ -200,16 +200,26 @@ def get_area_field(
             )
             return cached
 
-        # Fetch only the native steps bracketing the missing hours.
-        m_start = datetime.fromtimestamp(min(missing), UTC)
-        m_end = datetime.fromtimestamp(max(missing), UTC)
+        # Fetch a block of missing hours so scrub ticks amortise GRIB download
+        # overhead (one multi-step fetch instead of 1–2 hours per tick).
+        # Extend +12 h past the first miss even beyond the request window —
+        # the forcing cache keeps those hours warm for subsequent scrubs.
+        _FETCH_AHEAD_H = 12
+        miss_lo = min(missing)
+        miss_hi = max(missing)
+        fetch_lo = miss_lo
+        fetch_hi = max(miss_hi, miss_lo + _FETCH_AHEAD_H * 3600)
+        m_start = datetime.fromtimestamp(fetch_lo, UTC)
+        m_end = datetime.fromtimestamp(fetch_hi, UTC)
         steps = src.steps_for_window(cyc, m_start, m_end)
         logger.info(
-            "wind %s cache-miss region=%s missing=%d/%d steps=%d grid=%dx%d res=%.4f",
+            "wind %s cache-miss region=%s missing=%d/%d fetch_block_h=%.0f steps=%d "
+            "grid=%dx%d res=%.4f",
             model_id,
             region.key(),
             len(missing),
             len(needed),
+            (fetch_hi - fetch_lo) / 3600.0,
             len(steps),
             lats_t.size,
             lons_t.size,
@@ -221,9 +231,7 @@ def get_area_field(
             fetch_ms = (time.perf_counter() - t_fetch) * 1000
 
             t_norm = time.perf_counter()
-            canon = native.regrid(lats_t, lons_t).resample_hourly(
-                min(missing), max(missing)
-            )
+            canon = native.regrid(lats_t, lons_t).resample_hourly(fetch_lo, fetch_hi)
             merged = WindField.concat_time([cached, canon]) if cached is not None else canon
             norm_ms = (time.perf_counter() - t_norm) * 1000
 
@@ -289,9 +297,13 @@ def get_display_series(
     end: datetime,
     zoom: float | None = None,
     enable_terrain: bool = True,
+    corridor: bool = False,
     on_progress=None,
 ) -> dict | None:
-    """Multi-hour series via WindProvider (zoom-tiered display window)."""
+    """Multi-hour series via WindProvider (zoom-tiered display window).
+
+    corridor=True: exact bbox for route-review heatmaps (no browse pad).
+    """
     return get_provider().display_series(
         model_id,
         bbox,
@@ -299,6 +311,7 @@ def get_display_series(
         end=end,
         zoom=zoom,
         enable_terrain=enable_terrain,
+        corridor=corridor,
         on_progress=on_progress,
     )
 

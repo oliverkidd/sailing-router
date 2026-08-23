@@ -1,0 +1,422 @@
+"use client";
+
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import LabParamsPanel from "@/components/LabParamsPanel";
+import { api } from "@/lib/api";
+import { buildLabCourses, type LabCourse } from "@/lib/labCourses";
+import {
+  appendLabRun,
+  assembleRouteRequest,
+  colorForRun,
+  defaultsFromSchema,
+  emptyLabStore,
+  formatDelta,
+  formatElapsed,
+  formatNm,
+  loadLabStore,
+  runPoolCourses,
+  type LabCourseResult,
+  type LabRun,
+  type LabRunStore,
+  type LabValues,
+} from "@/lib/labRuns";
+import { currentForecastHourUtc } from "@/lib/mapOverlays";
+import { fetchWindArea, hoursAheadIso, sampleGrid, sliceSeries } from "@/lib/meteoGrid";
+import type { BoatConfig, RouteLeg, TuningSchemaResponse } from "@/lib/types";
+
+const LabMap = dynamic(() => import("@/components/LabMap"), { ssr: false });
+
+const INITIAL_BOAT: BoatConfig = {
+  polar_id: "",
+  tack_penalty_s: 30,
+  gybe_penalty_s: 20,
+  upwind_twa_deg: null,
+  downwind_twa_deg: null,
+  leeway_coeff: 0,
+  leeway_max_deg: 8,
+  polar_efficiency: 1,
+};
+
+const SOLENT_BBOX = {
+  lat_min: 50.7,
+  lon_min: -1.45,
+  lat_max: 50.8,
+  lon_max: -1.25,
+};
+
+type CardStatus = "idle" | "running" | "ok" | "error";
+
+function twdFromUv(u: number, v: number): number {
+  return ((Math.atan2(-u, -v) * 180) / Math.PI + 360) % 360;
+}
+
+export default function RoutingLabPage() {
+  const [schema, setSchema] = useState<TuningSchemaResponse | null>(null);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [values, setValues] = useState<LabValues>({});
+  const [boat, setBoat] = useState<BoatConfig>(INITIAL_BOAT);
+  const [twd, setTwd] = useState<number | null>(null);
+  const [windNote, setWindNote] = useState("Fetching GFS TWD…");
+  const [departUtc, setDepartUtc] = useState(currentForecastHourUtc);
+  const [store, setStore] = useState<LabRunStore>(emptyLabStore);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [running, setRunning] = useState(false);
+  const [status, setStatus] = useState<Record<string, CardStatus>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const runningLock = useRef(false);
+  const storeRef = useRef(store);
+  const valuesRef = useRef(values);
+  const boatRef = useRef(boat);
+  const schemaRef = useRef(schema);
+  const twdRef = useRef(twd);
+  storeRef.current = store;
+  valuesRef.current = values;
+  boatRef.current = boat;
+  schemaRef.current = schema;
+  twdRef.current = twd;
+
+  const courses = useMemo(() => buildLabCourses(twd, departUtc), [twd, departUtc]);
+
+  useEffect(() => {
+    document.title = "Routing lab";
+    setStore(loadLabStore());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .tuningSchema()
+      .then((s) => {
+        if (cancelled) return;
+        setSchema(s);
+        setValues(defaultsFromSchema(s));
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setSchemaError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (boat.polar_id) return;
+    api
+      .sampleBoat()
+      .then((res) => setBoat({ ...INITIAL_BOAT, ...res.boat }))
+      .catch(() => {
+        /* polar stays empty — Run all stays disabled */
+      });
+  }, [boat.polar_id]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    const hour = currentForecastHourUtc();
+    fetchWindArea(SOLENT_BBOX, "gfs", hour, hoursAheadIso(hour, 1), ac.signal, undefined, false)
+      .then((res) => {
+        if (ac.signal.aborted) return;
+        if (!res.series || res.series.times.length === 0) {
+          setWindNote(res.error || "No GFS wind — using westerly 270°");
+          return;
+        }
+        const t = res.series.times[0];
+        const grid = sliceSeries(res.series, t);
+        const { u, v, speed } = sampleGrid(grid, 50.75, -1.35);
+        if (speed < 0.4) {
+          setWindNote("GFS wind too light — using westerly 270°");
+          return;
+        }
+        const deg = twdFromUv(u, v);
+        setTwd(deg);
+        setWindNote(`TWD ${deg.toFixed(0)}° · GFS`);
+      })
+      .catch((err: unknown) => {
+        if (!ac.signal.aborted) {
+          setWindNote(err instanceof Error ? err.message : "Wind fetch failed — using 270°");
+        }
+      });
+    return () => ac.abort();
+  }, []);
+
+  const toggleRun = useCallback((id: string) => {
+    setSelectedIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  }, []);
+
+  const restoreRun = useCallback((run: LabRun) => {
+    setValues({ ...run.params });
+    if (run.polar_id) setBoat((b) => ({ ...b, polar_id: run.polar_id }));
+  }, []);
+
+  const runAll = useCallback(async () => {
+    const schemaNow = schemaRef.current;
+    const boatNow = boatRef.current;
+    if (runningLock.current || !schemaNow || !boatNow.polar_id) return;
+    runningLock.current = true;
+    setRunning(true);
+    const depart = currentForecastHourUtc();
+    setDepartUtc(depart);
+    const courseList = buildLabCourses(twdRef.current, depart);
+    setStatus(Object.fromEntries(courseList.map((c) => [c.id, "running"])));
+    setErrors({});
+
+    const results: Record<string, LabCourseResult> = {};
+    await runPoolCourses(courseList, async (lab) => {
+      try {
+        const req = assembleRouteRequest({
+          course: lab.course,
+          boat: boatNow,
+          schema: schemaNow,
+          values: valuesRef.current,
+          departUtc: depart,
+        });
+        const res = await api.route(req);
+        const model = res.routes[0];
+        if (!model) {
+          results[lab.id] = {
+            elapsed_s: 0,
+            distance_nm: 0,
+            n_tacks: 0,
+            n_gybes: 0,
+            unreachable: true,
+            warnings: res.warnings,
+            legs: [],
+            error: "No route returned",
+          };
+          setStatus((s) => ({ ...s, [lab.id]: "error" }));
+          setErrors((e) => ({ ...e, [lab.id]: "No route returned" }));
+          return;
+        }
+        const warnings = [...(res.warnings ?? []), ...(model.warnings ?? [])];
+        results[lab.id] = {
+          elapsed_s: model.elapsed_s,
+          distance_nm: model.distance_nm,
+          n_tacks: model.n_tacks,
+          n_gybes: model.n_gybes,
+          eta_utc: model.eta_utc,
+          unreachable: Boolean(model.unreachable),
+          warnings,
+          legs: model.legs,
+        };
+        setStatus((s) => ({ ...s, [lab.id]: model.unreachable ? "error" : "ok" }));
+        if (model.unreachable) {
+          setErrors((e) => ({ ...e, [lab.id]: warnings[0] || "Unreachable" }));
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results[lab.id] = {
+          elapsed_s: 0,
+          distance_nm: 0,
+          n_tacks: 0,
+          n_gybes: 0,
+          unreachable: true,
+          warnings: [],
+          legs: [],
+          error: msg,
+        };
+        setStatus((s) => ({ ...s, [lab.id]: "error" }));
+        setErrors((e) => ({ ...e, [lab.id]: msg }));
+      }
+    });
+
+    const { store: next, run } = appendLabRun(storeRef.current, {
+      timestamp: new Date().toISOString(),
+      depart_utc: depart,
+      polar_id: boatNow.polar_id,
+      params: { ...valuesRef.current },
+      results,
+    });
+    setStore(next);
+    setSelectedIds((ids) => {
+      const prev = ids[0];
+      return prev && prev !== run.id ? [run.id, prev] : [run.id];
+    });
+    setRunning(false);
+    runningLock.current = false;
+  }, []);
+
+  const selectedRuns = useMemo(() => {
+    const set = new Set(selectedIds);
+    return store.runs.filter((r) => set.has(r.id)).sort((a, b) => a.seq - b.seq);
+  }, [store.runs, selectedIds]);
+
+  const canRun = Boolean(schema && boat.polar_id) && !running;
+
+  return (
+    <div className="lab-shell">
+      <aside className="lab-rail">
+        <h1>Routing lab</h1>
+        <p className="lab-sub">Internal tuning page — not linked from the main app.</p>
+        {schemaError && <p className="lab-error">{schemaError}</p>}
+        {!schema && !schemaError && <p className="lab-muted">Loading parameter schema…</p>}
+        {schema && (
+          <LabParamsPanel
+            schema={schema}
+            values={values}
+            onChange={setValues}
+            onResetAll={() => setValues(defaultsFromSchema(schema))}
+          />
+        )}
+        <section className="lab-history">
+          <h2>Runs</h2>
+          {store.runs.length === 0 && <p className="lab-muted">No runs yet.</p>}
+          <ul className="lab-history-list">
+            {store.runs.map((run) => (
+              <li key={run.id} className="lab-history-item">
+                <div className="lab-history-head">
+                  <span className="lab-run-dot" style={{ background: colorForRun(run.seq) }} />
+                  <strong>{run.label}</strong>
+                  <span className="lab-muted">
+                    {new Date(run.timestamp).toLocaleTimeString(undefined, {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <button type="button" className="rail-section-action" onClick={() => restoreRun(run)}>
+                    Restore
+                  </button>
+                </div>
+                <details>
+                  <summary>Param snapshot</summary>
+                  <pre className="lab-snapshot">{JSON.stringify(run.params, null, 2)}</pre>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </aside>
+      <main className="lab-main">
+        <div className="lab-toolbar">
+          <div className="lab-toolbar-meta">
+            <span>GFS</span>
+            <span>{windNote}</span>
+            <span>Depart {departUtc.replace("T", " ").replace(".000Z", "Z")}</span>
+            {!boat.polar_id && <span className="lab-muted">Loading polar…</span>}
+          </div>
+          <button type="button" className="lab-run-btn" disabled={!canRun} onClick={() => void runAll()}>
+            {running ? "Running…" : "Run all"}
+          </button>
+        </div>
+        <div className="lab-grid">
+          {courses.map((lab) => (
+            <CourseCard
+              key={lab.id}
+              lab={lab}
+              runs={store.runs}
+              selectedRuns={selectedRuns}
+              selectedIds={selectedIds}
+              status={status[lab.id] ?? "idle"}
+              error={errors[lab.id]}
+              onToggle={toggleRun}
+            />
+          ))}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function CourseCard({
+  lab,
+  runs,
+  selectedRuns,
+  selectedIds,
+  status,
+  error,
+  onToggle,
+}: {
+  lab: LabCourse;
+  runs: LabRun[];
+  selectedRuns: LabRun[];
+  selectedIds: string[];
+  status: CardStatus;
+  error?: string;
+  onToggle: (id: string) => void;
+}) {
+  const mapRoutes = selectedRuns
+    .map((run) => {
+      const res = run.results[lab.id];
+      if (!res?.legs?.length) return null;
+      return { id: run.id, color: colorForRun(run.seq), legs: res.legs as RouteLeg[] };
+    })
+    .filter((x): x is { id: string; color: string; legs: RouteLeg[] } => x != null);
+
+  return (
+    <article className="lab-card">
+      <header className="lab-card-head">
+        <div>
+          <h2>{lab.title}</h2>
+          <p>{lab.blurb}</p>
+        </div>
+        <span className={`lab-status lab-status-${status}`}>
+          {status === "running" ? "routing" : status === "ok" ? "ok" : status === "error" ? "error" : ""}
+        </span>
+      </header>
+      <div className="lab-card-map-wrap">
+        <LabMap course={lab.course} routes={mapRoutes} />
+        {status === "running" && <div className="lab-map-overlay">Routing…</div>}
+      </div>
+      <div className="lab-chips">
+        {runs.map((run) => (
+          <label key={run.id} className={`lab-chip${selectedIds.includes(run.id) ? " on" : ""}`}>
+            <span className="lab-run-dot" style={{ background: colorForRun(run.seq) }} />
+            <input type="checkbox" checked={selectedIds.includes(run.id)} onChange={() => onToggle(run.id)} />
+            {run.label}
+          </label>
+        ))}
+        {runs.length === 0 && <span className="lab-muted">No runs yet</span>}
+      </div>
+      <div className="lab-metrics">
+        {selectedRuns.map((run, i) => {
+          const res = run.results[lab.id];
+          const prev = i > 0 ? selectedRuns[i - 1].results[lab.id] : undefined;
+          if (!res) {
+            return (
+              <div key={run.id} className="lab-metric-row">
+                <span className="lab-run-dot" style={{ background: colorForRun(run.seq) }} />
+                <span>{run.label}</span>
+                <span className="lab-muted">no result</span>
+              </div>
+            );
+          }
+          if (res.error) {
+            return (
+              <div key={run.id} className="lab-metric-row">
+                <span className="lab-run-dot" style={{ background: colorForRun(run.seq) }} />
+                <span>{run.label}</span>
+                <span className="lab-error">{res.error}</span>
+              </div>
+            );
+          }
+          const dElapsed = prev && !prev.error ? res.elapsed_s - prev.elapsed_s : null;
+          const dNm = prev && !prev.error ? res.distance_nm - prev.distance_nm : null;
+          const dTack = prev && !prev.error ? res.n_tacks - prev.n_tacks : null;
+          const dGybe = prev && !prev.error ? res.n_gybes - prev.n_gybes : null;
+          return (
+            <div key={run.id} className="lab-metric-row">
+              <span className="lab-run-dot" style={{ background: colorForRun(run.seq) }} />
+              <span>{run.label}</span>
+              <span>
+                {formatElapsed(res.elapsed_s)}
+                {dElapsed != null && (
+                  <em className={dElapsed <= 0 ? "better" : "worse"}> {formatDelta(dElapsed)}s</em>
+                )}
+              </span>
+              <span>
+                {formatNm(res.distance_nm)}
+                {dNm != null && <em className={dNm <= 0 ? "better" : "worse"}> {formatDelta(dNm, 2)}</em>}
+              </span>
+              <span>
+                {res.n_tacks} t / {res.n_gybes} g
+                {dTack != null && <em className={dTack <= 0 ? "better" : "worse"}> t{formatDelta(dTack)}</em>}
+                {dGybe != null && <em className={dGybe <= 0 ? "better" : "worse"}> g{formatDelta(dGybe)}</em>}
+              </span>
+              {res.unreachable && <span className="lab-error">unreachable</span>}
+            </div>
+          );
+        })}
+      </div>
+      {error && status !== "running" && <p className="lab-error lab-card-error">{error}</p>}
+    </article>
+  );
+}

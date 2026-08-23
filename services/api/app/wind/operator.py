@@ -165,17 +165,45 @@ def _blend_sector_cube(
     wd: np.ndarray,
     wn: np.ndarray,
 ) -> np.ndarray:
-    """Sector + day/night blend of library cube onto the display mesh."""
-    nlat, nlon = i.shape
-    day_stack = np.empty((N_SECTORS, nlat, nlon), dtype=np.float64)
-    night_stack = np.empty_like(day_stack)
-    for s in range(N_SECTORS):
-        day_stack[s] = _bilinear_gather(cube[s, 0], i, j, fx, fy)
-        night_stack[s] = _bilinear_gather(cube[s, 1], i, j, fx, fy)
-    c00 = np.take_along_axis(day_stack, s0[np.newaxis, ...], axis=0)[0]
-    c10 = np.take_along_axis(day_stack, s1[np.newaxis, ...], axis=0)[0]
-    c01 = np.take_along_axis(night_stack, s0[np.newaxis, ...], axis=0)[0]
-    c11 = np.take_along_axis(night_stack, s1[np.newaxis, ...], axis=0)[0]
+    """Sector + day/night blend of library cube onto the display mesh.
+
+    Only the two bracketing sectors are bilinearly gathered (not all 16).
+    When forcing direction is near-uniform, gather those two planes once.
+    """
+    uniq0 = np.unique(s0)
+    uniq1 = np.unique(s1)
+    # Fast path: single pair of bracketing sectors across the whole grid
+    # (typical for coarse NWP forcing that barely varies within a viewport).
+    if uniq0.size == 1 and uniq1.size == 1:
+        a = int(uniq0[0])
+        b = int(uniq1[0])
+        c00 = _bilinear_gather(cube[a, 0], i, j, fx, fy)
+        c10 = _bilinear_gather(cube[b, 0], i, j, fx, fy)
+        c01 = _bilinear_gather(cube[a, 1], i, j, fx, fy)
+        c11 = _bilinear_gather(cube[b, 1], i, j, fx, fy)
+    else:
+        # Per-point sectors: gather only the unique sector planes that appear.
+        needed = np.unique(np.concatenate([uniq0, uniq1]))
+        day_planes: dict[int, np.ndarray] = {}
+        night_planes: dict[int, np.ndarray] = {}
+        for s in needed:
+            si = int(s)
+            day_planes[si] = _bilinear_gather(cube[si, 0], i, j, fx, fy)
+            night_planes[si] = _bilinear_gather(cube[si, 1], i, j, fx, fy)
+        c00 = np.empty(i.shape, dtype=np.float64)
+        c10 = np.empty_like(c00)
+        c01 = np.empty_like(c00)
+        c11 = np.empty_like(c00)
+        for s in needed:
+            si = int(s)
+            m0 = s0 == si
+            m1 = s1 == si
+            if m0.any():
+                c00[m0] = day_planes[si][m0]
+                c01[m0] = night_planes[si][m0]
+            if m1.any():
+                c10[m1] = day_planes[si][m1]
+                c11[m1] = night_planes[si][m1]
     day = ws * c00 + (1.0 - ws) * c10
     night = ws * c01 + (1.0 - ws) * c11
     return wd * day + wn * night

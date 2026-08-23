@@ -214,17 +214,18 @@ def test_cyclades_library_coastal_vs_sea():
     forcing = WindField.build("test", times, lats, lons, u, v)
     t = datetime(2026, 7, 18, 12, tzinfo=UTC)
 
-    # Kea highland-ish vs open water between Kea and Kythnos.
-    coastal = downscale_point(forcing, lib, 37.60, 24.35, t)
-    midsea = downscale_point(forcing, lib, 37.55, 24.55, t)
-    raw_c = downscale_point(forcing, None, 37.60, 24.35, t)
-    raw_s = downscale_point(forcing, None, 37.55, 24.55, t)
+    # Sea lee of Gyaros (terrain shadow over water) vs open water further east.
+    # Land cells are identity under wn2-sea — do not sample highland points.
+    coastal = downscale_point(forcing, lib, 37.60, 24.68, t)
+    midsea = downscale_point(forcing, lib, 37.55, 24.90, t)
+    raw_c = downscale_point(forcing, None, 37.60, 24.68, t)
+    raw_s = downscale_point(forcing, None, 37.55, 24.90, t)
     assert coastal and midsea and raw_c and raw_s
 
     du_c = abs(coastal[0] - raw_c[0]) + abs(coastal[1] - raw_c[1])
     du_s = abs(midsea[0] - raw_s[0]) + abs(midsea[1] - raw_s[1])
-    assert du_c > 0.05, f"coastal should differ from raw forcing, got |du|={du_c}"
-    # Mid-sea may still see weak roughness/orography bleed; should be weaker than coastal.
+    assert du_c > 0.05, f"coastal sea lee should differ from raw forcing, got |du|={du_c}"
+    # Open mid-sea should be weaker than the lee shadow.
     print(
         f"OK cyclades library coastal|du|={du_c:.3f} midsea|du|={du_s:.3f} "
         f"(coastal > midsea: {du_c > du_s})"

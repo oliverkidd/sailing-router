@@ -67,6 +67,7 @@ export async function fetchWindArea(
   signal?: AbortSignal,
   zoom?: number,
   terrain?: boolean,
+  corridor?: boolean,
 ): Promise<WindSeriesResult> {
   const extra: Record<string, string> = {
     model_id: modelId,
@@ -78,6 +79,9 @@ export async function fetchWindArea(
   }
   if (terrain === false) {
     extra.terrain = "false";
+  }
+  if (corridor) {
+    extra.corridor = "true";
   }
   const q = bboxParams(bbox, extra);
   const t0 = performance.now();
@@ -117,6 +121,8 @@ export async function fetchWindArea(
         elapsedMs,
         terrain: data.terrain_applied,
         tier: data.zoom_tier,
+        corridor: !!corridor,
+        bbox: data.bbox,
       });
     }
     return { series: data };
@@ -146,6 +152,7 @@ export async function fetchWindAreaStream(
   signal?: AbortSignal,
   zoom?: number,
   terrain?: boolean,
+  corridor?: boolean,
 ): Promise<WindSeriesResult> {
   const extra: Record<string, string> = {
     model_id: modelId,
@@ -157,6 +164,9 @@ export async function fetchWindAreaStream(
   }
   if (terrain === false) {
     extra.terrain = "false";
+  }
+  if (corridor) {
+    extra.corridor = "true";
   }
   const q = bboxParams(bbox, extra);
   const t0 = performance.now();

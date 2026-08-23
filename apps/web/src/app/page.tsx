@@ -34,12 +34,14 @@ import {
   loadStoredRouteSession,
   saveStoredCourse,
   saveStoredRouteSession,
+  withSequentialMarkNames,
   type MapBounds,
 } from "@/lib/mapOverlays";
 import {
   bboxContains,
   regionCellKey,
   regionNeedsDenserReplace,
+  tierForZoom,
 } from "@/lib/windTiles";
 import {
   contiguousRunMax,
@@ -73,6 +75,8 @@ type WindCacheEntry = {
   series: WindSeries;
   region: MapBounds;
   loadedEndUtc: string;
+  /** Display tier of the cached series (coarse/mid/fine/ultra). */
+  tier: string;
 };
 
 function courseBBox(course: Course, margin = SERIES_MARGIN_DEG): MapBounds {
@@ -140,7 +144,7 @@ export default function Home() {
   const [prepState, setPrepState] = useState<
     "idle" | "preparing" | "ready" | "error" | "warning"
   >("idle");
-  const [routeModal, setRouteModal] = useState<"hidden" | "running" | "error">("hidden");
+  const [routeModal, setRouteModal] = useState<"hidden" | "running" | "error" | "done">("hidden");
   const [routeSteps, setRouteSteps] = useState<RouteProgressStep[]>([]);
   const [windSteps, setWindSteps] = useState<RouteProgressStep[]>([]);
   const [routeWarnings, setRouteWarnings] = useState<string[]>([]);
@@ -187,7 +191,7 @@ export default function Home() {
   const activeRoute = routes[displayRouteIndex];
   const windSeries =
     (activeModelId && routeCache[activeModelId]) ||
-    (activeModelId && browseCache[activeModelId]?.series) ||
+    (routes.length === 0 && activeModelId && browseCache[activeModelId]?.series) ||
     null;
 
   const scrubHourUtc = floorHourIso(overlayTimeUtc);
@@ -229,7 +233,7 @@ export default function Home() {
   let mapLoadLabel = "";
   if (routeLoading) {
     mapLoadKind = "route";
-    mapLoadLabel = "Computing route…";
+    mapLoadLabel = routeModal === "done" ? "Route ready" : "Computing route…";
   } else if (windLoading && !windSeries) {
     mapLoadKind = "wind-initial";
     mapLoadLabel = activeModelId ? `Loading ${activeModelId}` : "Loading forecast";
@@ -258,7 +262,11 @@ export default function Home() {
     const stored = loadStoredCourse();
     const now = currentForecastHourUtc();
     const nextCourse = stored
-      ? { ...stored, depart_utc: ensureFutureDepart(stored.depart_utc) }
+      ? {
+          ...stored,
+          marks: withSequentialMarkNames(stored.marks ?? []),
+          depart_utc: ensureFutureDepart(stored.depart_utc),
+        }
       : emptyCourse(now);
     setCourse(nextCourse);
 
@@ -405,6 +413,8 @@ export default function Home() {
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
+            const seriesTier =
+              series.zoom_tier ?? tierForZoom(zoom ?? mapZoom);
             setBrowseCache((prev) => {
               const existing = prev[modelId];
               const merged =
@@ -417,6 +427,7 @@ export default function Home() {
                   series: merged,
                   region: merge && existing ? existing.region : cacheRegion,
                   loadedEndUtc: last,
+                  tier: merge && existing ? existing.tier : seriesTier,
                 },
               };
             });
@@ -449,7 +460,7 @@ export default function Home() {
           }
         });
     },
-    [activeModelId, setStatus, windNinjaOpt],
+    [activeModelId, setStatus, windNinjaOpt, mapZoom],
   );
 
   const prefetchBrowseRange = useCallback(
@@ -483,6 +494,7 @@ export default function Home() {
       fetchWindArea(reqBounds, modelId, gap.start, gap.end, ac.signal, z, useTerrain)
         .then(({ series }) => {
           if (ac.signal.aborted || !series) return;
+          const seriesTier = series.zoom_tier ?? tierForZoom(z);
           setBrowseCache((prev) => {
             const existing = prev[modelId];
             if (!existing) {
@@ -491,6 +503,7 @@ export default function Home() {
                   series,
                   region: series.bbox ?? reqBounds,
                   loadedEndUtc: series.times[series.times.length - 1] ?? gap.end,
+                  tier: seriesTier,
                 },
               };
             }
@@ -500,6 +513,7 @@ export default function Home() {
                 series: merged,
                 region: existing.region,
                 loadedEndUtc: merged.times[merged.times.length - 1] ?? existing.loadedEndUtc,
+                tier: existing.tier,
               },
             };
           });
@@ -531,9 +545,9 @@ export default function Home() {
       const z = zoom ?? mapZoom;
       const useTerrain = terrain ?? windNinjaOpt;
       const inRegion = !!(entry && bboxContains(entry.region, viewportBounds, 0.05));
-      // Density replace only when the cached display window is much larger than viewport.
+      // Density replace only when the current zoom needs a finer tier than cached.
       const denserNeeded = !!(
-        entry && regionNeedsDenserReplace(entry.region, viewportBounds)
+        entry && regionNeedsDenserReplace(entry.tier, z)
       );
       const merge = inRegion && !opts?.forceReplace && !denserNeeded;
       // First fetch already covers focus..(focus+PREFETCH_WINDOW_H-1).
@@ -586,7 +600,7 @@ export default function Home() {
       const { start, end } = routeTimeWindow(route, course.depart_utc);
       // Do not set overlayStatus fetching — would flash wind load modal in review.
 
-      fetchWindArea(bbox, modelId, start, end, ac.signal, undefined)
+      fetchWindArea(bbox, modelId, start, end, ac.signal, undefined, undefined, true)
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
@@ -612,7 +626,7 @@ export default function Home() {
 
   // Browse: only the active model — wind series stay small in RAM; chart tiles are on disk.
   useEffect(() => {
-    if (routes.length > 0) return;
+    if (routes.length > 0 || routeModal !== "hidden") return;
     if (!viewport || apiUp !== true) return;
     if (!activeModelId || !selected.has(activeModelId)) return;
 
@@ -621,7 +635,7 @@ export default function Home() {
       const focus = floorHourIso(overlayTimeUtc);
       const entry = browseCacheRef.current[id];
       const inRegion = !!(entry && bboxContains(entry.region, viewport, 0.05));
-      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.region, viewport));
+      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.tier, mapZoom));
       if (inRegion && !denserNeeded && entry && seriesCoversHour(entry.series, focus)) {
         const aheadEnd = capHour(hoursAheadIso(focus, PREFETCH_WINDOW_H - 1), horizonEndUtc);
         const prefetchStart = hoursAheadIso(focus, 1);
@@ -644,6 +658,7 @@ export default function Home() {
     activeModelId,
     apiUp,
     routes.length,
+    routeModal,
     overlayTimeUtc,
     horizonEndUtc,
     scheduleBrowseWindow,
@@ -652,7 +667,7 @@ export default function Home() {
 
   // Penultimate of contiguous run → prefetch next PREFETCH_WINDOW_H hours after runMax.
   useEffect(() => {
-    if (routes.length > 0) return;
+    if (routes.length > 0 || routeModal !== "hidden") return;
     if (!viewport || !activeModelId || apiUp !== true) return;
     const entry = browseCache[activeModelId];
     if (!entry || !bboxContains(entry.region, viewport, 0.05)) return;
@@ -675,6 +690,7 @@ export default function Home() {
     activeModelId,
     apiUp,
     routes.length,
+    routeModal,
     horizonEndUtc,
     prefetchBrowseRange,
   ]);
@@ -749,15 +765,14 @@ export default function Home() {
     else if (editMode === "mark")
       setCourse((c) => ({
         ...c,
-        marks: [
+        marks: withSequentialMarkNames([
           ...c.marks,
           {
             position: [lat, lon],
             radius_nm: 0.3,
             rounding: "either",
-            name: `M${c.marks.length + 1}`,
           },
-        ],
+        ]),
       }));
     setEditMode("none");
   };
@@ -846,6 +861,19 @@ export default function Home() {
       setRunMsg("");
       setRouteWarnings([]);
     }
+    setRouteSteps((prev) =>
+      prev.map((s) => {
+        if (s.status === "done" || s.status === "error") return s;
+        const ms =
+          s.status === "active" && s.ms != null ? Math.max(0, Date.now() - s.ms) : s.ms;
+        return { ...s, status: "done" as const, ms };
+      }),
+    );
+    setRouteModal("done");
+  };
+
+  /** Dismiss the post-route summary overlay; keep routes for review. */
+  const acknowledgeRouteResults = () => {
     setRouteModal("hidden");
     setRouteSteps([]);
   };
@@ -1239,6 +1267,7 @@ export default function Home() {
           loading={windLoading && !inRouteReview}
           routeActive={inRouteReview}
           leg={playbackLeg}
+          legs={activeRoute?.legs ?? null}
           playUntilUtc={activeRoute?.eta_utc ?? null}
           distanceNm={playbackDistanceNm}
         />
@@ -1252,9 +1281,11 @@ export default function Home() {
           routeWarnings={routeLoading ? routeWarnings : undefined}
           routeError={routeModal === "error"}
           retryableModelIds={retryableModelIds}
+          completedRoutes={routeModal === "done" ? routes : undefined}
           onRetry={runRoute}
           onRetryModel={retryModel}
           onEdit={dismissRouteModal}
+          onView={acknowledgeRouteResults}
         />
         {activeError && <div className="map-error-banner">{activeError}</div>}
         <MapControls

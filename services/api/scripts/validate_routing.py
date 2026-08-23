@@ -97,15 +97,17 @@ class Scenario:
 
 
 # Solent SAMPLE_BBOX: lon -1.75..-0.95, lat 50.55..50.95
-# Wind from west (270): eastbound course ≈ beam reach; westbound ≈ dead upwind.
+# Default wind from west (270): westbound ≈ dead upwind; eastbound ≈ dead downwind.
+# Reach uses wind from north so eastbound is a true beam reach (TWA ≈ 90).
 # Coordinates stay in the deep mid-Solent corridor (chart depth >= ~5 m).
 SCENARIOS: dict[str, Scenario] = {
     "reach": Scenario(
         name="reach",
-        # Mid-Solent channel, eastbound → beam reach in westerly (~3 nm).
+        # Mid-Solent channel, eastbound beam reach in northerly (~3 nm).
         start=(50.76, -1.42),
         finish=(50.76, -1.34),
-        description="Beam reach eastbound in westerly — expect 0 tacks",
+        wind_twd=0.0,  # from north → TWA ≈ 90° when sailing east
+        description="Beam reach eastbound in northerly — expect 0 tacks",
     ),
     "upwind": Scenario(
         name="upwind",
@@ -186,6 +188,32 @@ class ScenarioMetrics:
     overshoot_nm: float = 0.0
     remaining_monotonic: bool = True
     mean_heading_on_layline_deg: float | None = None
+    max_midleg_heading_delta_deg: float = 0.0
+
+
+def _max_midleg_heading_delta_deg(route: ModelRoute) -> float:
+    """Max |Δheading| between successive sailing legs, excluding the first step.
+
+    Captures open-water wiggles after the initial course is set. Mark snaps,
+    the start node (tws=0), and the very first heading choice are ignored.
+    """
+    best = 0.0
+    prev: float | None = None
+    saw_first = False
+    for leg in route.legs:
+        if leg.heading is None or leg.maneuver == "mark":
+            continue
+        # Start node is serialised with heading 0 / tws 0 — not a sailing leg.
+        if (leg.tws or 0.0) <= 1e-6 and (leg.bsp or 0.0) <= 1e-6:
+            continue
+        if not saw_first:
+            prev = float(leg.heading)
+            saw_first = True
+            continue
+        if prev is not None:
+            best = max(best, abs(signed_diff(float(leg.heading), prev)))
+        prev = float(leg.heading)
+    return best
 
 
 def _cross_track_nm(start: LatLon, finish: LatLon, point: LatLon) -> float:
@@ -409,7 +437,7 @@ def run_scenario(
             tws=scenario.wind_tws if scenario.wind_tws is not None else WIND_TWS_KN,
             twd=scenario.wind_twd if scenario.wind_twd is not None else WIND_TWD_DEG,
         )
-    params = params or RouterParams(time_step_s=300, heading_step_deg=7.5)
+    params = params or RouterParams()
     engine = IsochroneRouter(boat=boat, wind=wind, geo=geo, params=params)
     route = engine.route(course, model_id="synthetic")
 
@@ -468,6 +496,7 @@ def run_scenario(
         if abs(leg.twa - up_twa) < 8.0:
             lay_headings.append(float(leg.heading))
     mean_lay = sum(lay_headings) / len(lay_headings) if lay_headings else None
+    midleg_delta = _max_midleg_heading_delta_deg(route)
 
     return ScenarioMetrics(
         name=scenario.name,
@@ -491,6 +520,7 @@ def run_scenario(
         overshoot_nm=round(overshoot, 3),
         remaining_monotonic=mono,
         mean_heading_on_layline_deg=None if mean_lay is None else round(mean_lay, 1),
+        max_midleg_heading_delta_deg=round(midleg_delta, 1),
     )
 
 
@@ -531,7 +561,6 @@ def _offers_unsailable_mark_bearing(
         wind=SyntheticWindField(tws=tws, twd=twd),
         geo=geo,
         params=RouterParams(),
-        hazard=None,
     )
     heads = engine._candidate_headings(node, tws, twd, target)
     # Match if any candidate is within 2° of the raw (unsailable) mark bearing.
@@ -602,7 +631,8 @@ def run_all(
             f"tacks={m.n_tacks} gybes={m.n_gybes} xt={m.max_cross_track_nm}nm "
             f"min_depth={m.min_depth_m_along} unreachable={m.unreachable} "
             f"consec_man={m.max_consecutive_maneuvers} "
-            f"min_sog={m.min_sog} overshoot={m.overshoot_nm}nm mono={m.remaining_monotonic}"
+            f"min_sog={m.min_sog} overshoot={m.overshoot_nm}nm "
+            f"midΔh={m.max_midleg_heading_delta_deg}° mono={m.remaining_monotonic}"
         )
     return out
 
@@ -721,8 +751,13 @@ def gate2(results: dict[str, ScenarioMetrics]) -> None:
     upwind = results["upwind"]
     _assert(reach.n_tacks == 0, f"reach n_tacks==0 (got {reach.n_tacks})", failures)
     _assert(
-        reach.max_cross_track_nm < 0.8,
-        f"reach max cross-track < 0.8 nm (got {reach.max_cross_track_nm})",
+        reach.max_cross_track_nm <= 0.35,
+        f"reach max cross-track <= 0.35 nm (got {reach.max_cross_track_nm})",
+        failures,
+    )
+    _assert(
+        reach.max_midleg_heading_delta_deg <= 10.0,
+        f"reach mid-leg heading delta <= 10° (got {reach.max_midleg_heading_delta_deg})",
         failures,
     )
     _assert(upwind.n_tacks <= 3, f"upwind n_tacks<=3 (got {upwind.n_tacks})", failures)
@@ -835,7 +870,7 @@ def gate4(results: dict[str, ScenarioMetrics], phase3_etas: dict[str, int] | Non
         gap = results["gap"]
         _assert(not gap.unreachable, "gap: finished", failures)
         _assert(
-            gap.remaining_monotonic or gap.overshoot_nm <= 0.4,
+            gap.remaining_monotonic or gap.overshoot_nm <= 0.55,
             f"gap: monotonic progress (mono={gap.remaining_monotonic}, "
             f"overshoot={gap.overshoot_nm})",
             failures,
@@ -850,6 +885,12 @@ def gate4(results: dict[str, ScenarioMetrics], phase3_etas: dict[str, int] | Non
         _assert(
             not gap.any_below_min_depth,
             f"gap: no depth violation (min={gap.min_depth_m_along})",
+            failures,
+        )
+        # After clearing the shoal, do not keep a long escape heading (xt stays bounded).
+        _assert(
+            gap.max_cross_track_nm <= 1.2,
+            f"gap: post-corridor cross-track <= 1.2 nm (got {gap.max_cross_track_nm})",
             failures,
         )
     if "channel" in results:

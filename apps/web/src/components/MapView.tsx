@@ -13,7 +13,15 @@ import {
 } from "@/lib/mapOverlays";
 import { sampleGrid, sliceSeries, type MeteoGrid, type WindSeries } from "@/lib/meteoGrid";
 import { WindHeatmapLayer } from "@/lib/windHeatmap";
-import { WindArrowLayer, WIND_ARROW_ICON_ID } from "@/lib/windArrows";
+import {
+  WindArrowLayer,
+  WIND_ARROW_ICON_ID,
+} from "@/lib/windArrows";
+import {
+  WindFlowLayer,
+  WIND_FLOW_PARTICLE_LAYER_ID,
+  WIND_FLOW_TAIL_LAYER_ID,
+} from "@/lib/windFlowLayer";
 import { colorForModel } from "@/lib/colors";
 import { BOAT_SVG, WIND_ARROW_SVG, svgToImage } from "@/lib/mapIcons";
 import { formatPointPopup, type PointInspect } from "@/lib/mapPopup";
@@ -28,7 +36,6 @@ import {
   TERRAIN_HILLSHADE_ID,
   TERRAIN_MESH_MIN_ZOOM,
   TERRAIN_SOURCE_ID,
-  WIND_HIDE_PITCH_DEG,
   fetchTerrainTileMeta,
   footprintsToFeatureCollection,
   viewportIntersectsAnyDem,
@@ -37,6 +44,10 @@ import {
 
 const DEFAULT_ZOOM = 5;
 const MIN_ZOOM = 4;
+/** Allow bearing rotate only once the camera is pitched into 3D. */
+const ROTATE_ENABLE_PITCH_DEG = 5;
+/** Enable 3D terrain mesh only when pitched (top-down stays in the flat pipeline). */
+const MESH_PITCH_MIN_DEG = 5;
 
 function courseCursorCss(mode: EditMode): string {
   if (mode === "none") return "";
@@ -52,10 +63,13 @@ function courseCursorCss(mode: EditMode): string {
 }
 
 let pmtilesRegistered = false;
-function ensurePmtilesProtocol() {
+export function ensurePmtilesProtocol() {
   if (pmtilesRegistered) return;
   const protocol = new Protocol();
-  maplibregl.addProtocol("pmtiles", protocol.tile);
+  // MapLibre 5 wants a Promise loader; pmtiles.tilev4 is that shape.
+  maplibregl.addProtocol("pmtiles", (params, abortController) =>
+    protocol.tilev4(params, abortController),
+  );
   pmtilesRegistered = true;
 }
 
@@ -69,6 +83,23 @@ const COASTLINE_COLOR = "#7a7a7a";
 
 /** Uniform isobath stroke — slate, low opacity. */
 const DEPTH_LINE_COLOR = "#475569";
+const DEPTH_FILL_OPACITY = 0.7;
+const DEPTH_LINE_OPACITY = 0.17;
+const DEPTH_TEXT_OPACITY = 0.9;
+
+/** Hide via opacity (not visibility:none) so MapLibre keeps the source tile cache warm. */
+function setDepthOpacity(map: maplibregl.Map, visible: boolean) {
+  if (map.getLayer("depth-fill")) {
+    map.setPaintProperty("depth-fill", "fill-opacity", visible ? DEPTH_FILL_OPACITY : 0);
+  }
+  if (map.getLayer("depth-line")) {
+    map.setPaintProperty("depth-line", "line-opacity", visible ? DEPTH_LINE_OPACITY : 0);
+  }
+  if (map.getLayer("depth-label")) {
+    map.setPaintProperty("depth-label", "text-opacity", visible ? DEPTH_TEXT_OPACITY : 0);
+  }
+}
+
 const DEPTH_LINE_PAINT: maplibregl.LineLayerSpecification["paint"] = {
   "line-color": DEPTH_LINE_COLOR,
   "line-width": [
@@ -82,7 +113,7 @@ const DEPTH_LINE_PAINT: maplibregl.LineLayerSpecification["paint"] = {
     14,
     1.0,
   ],
-  "line-opacity": 0.17,
+  "line-opacity": DEPTH_LINE_OPACITY,
 };
 
 /**
@@ -108,7 +139,7 @@ const DEPTH_BAND_PAINT: maplibregl.FillLayerSpecification["paint"] = {
     "#ffffff",
     "#ffffff",
   ],
-  "fill-opacity": 0.7,
+  "fill-opacity": DEPTH_FILL_OPACITY,
 };
 
 const DEPTH_LABEL_LAYOUT: maplibregl.SymbolLayerSpecification["layout"] = {
@@ -126,16 +157,17 @@ const DEPTH_LABEL_LAYOUT: maplibregl.SymbolLayerSpecification["layout"] = {
 const DEPTH_LABEL_PAINT: maplibregl.SymbolLayerSpecification["paint"] = {
   "text-color": "#475569",
   "text-halo-width": 0,
-  "text-opacity": 0.9,
+  "text-opacity": DEPTH_TEXT_OPACITY,
 };
 
-function buildChartStyle(origin: string): maplibregl.StyleSpecification {
+export function buildChartStyle(origin: string): maplibregl.StyleSpecification {
   const coastUrl = `pmtiles://${origin}/geo/coastline.pmtiles?v=${CHART_TILE_VERSION}`;
   const depthUrl = `pmtiles://${origin}/geo/depth.pmtiles?v=${CHART_TILE_VERSION}`;
 
   return {
     version: 8,
     glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+    transition: { duration: 0, delay: 0 },
     sources: {
       coastline: { type: "vector", url: coastUrl },
       depth: { type: "vector", url: depthUrl },
@@ -396,12 +428,18 @@ function routesToFeatureCollection(routes: ModelRoute[]): GeoJSON.FeatureCollect
 function maneuverPoints(routes: ModelRoute[]): GeoJSON.FeatureCollection {
   const feats: GeoJSON.Feature[] = [];
   for (const r of routes) {
-    for (const leg of r.legs) {
+    const { legs } = r;
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
       if (leg.maneuver === "none") continue;
+      // Tack/gybe is tagged on the post-turn child; the geometric turn is at the parent.
+      // Marks stay on the mark node itself.
+      const at =
+        leg.maneuver !== "mark" && i > 0 ? legs[i - 1].position : leg.position;
       feats.push({
         type: "Feature",
         properties: { maneuver: leg.maneuver, color: colorForModel(r.model_id) },
-        geometry: { type: "Point", coordinates: [leg.position[1], leg.position[0]] },
+        geometry: { type: "Point", coordinates: [at[1], at[0]] },
       });
     }
   }
@@ -514,6 +552,8 @@ export default function MapView({
 
   const windHeatRef = useRef<WindHeatmapLayer | null>(null);
   const windArrowsRef = useRef<WindArrowLayer | null>(null);
+  const windFlowRef = useRef<WindFlowLayer | null>(null);
+  const applyWindVizRef = useRef<(() => void) | null>(null);
   const windGridRef = useRef<MeteoGrid | null>(null);
   const windDataRef = useRef(false);
   const demFootprintsRef = useRef<DemBounds[]>([]);
@@ -567,12 +607,38 @@ export default function MapView({
     mapRef.current = map;
     // Arrow keys are used by TimeScrubber for route stepping — don't pan/zoom.
     map.keyboard.disable();
-    // Pitch for DEM / cliffs; keep the chart north-up (bearing always 0).
+    // Pitch for DEM / cliffs. Rotation stays off until the camera is pitched.
     map.touchZoomRotate.disableRotation();
     map.touchPitch.enable();
-    // Right-click / Ctrl-drag still pitches via dragRotate; we zero bearing.
+    let bearingResetting = false;
+    const rotationAllowed = () => map.getPitch() > ROTATE_ENABLE_PITCH_DEG;
+    const applyRotationGate = () => {
+      if (rotationAllowed()) {
+        map.touchZoomRotate.enableRotation();
+        return;
+      }
+      map.touchZoomRotate.disableRotation();
+      if (bearingResetting) return;
+      if (Math.abs(map.getBearing()) < 0.05) {
+        if (map.getBearing() !== 0) map.setBearing(0);
+        return;
+      }
+      bearingResetting = true;
+      map.easeTo({ bearing: 0, duration: 300 });
+      map.once("moveend", () => {
+        bearingResetting = false;
+        if (!rotationAllowed() && Math.abs(map.getBearing()) > 0.05) {
+          map.setBearing(0);
+        }
+      });
+    };
     map.on("rotate", () => {
-      if (map.getBearing() !== 0) map.setBearing(0);
+      if (bearingResetting) return;
+      if (!rotationAllowed() && map.getBearing() !== 0) map.setBearing(0);
+    });
+    map.on("pitch", () => {
+      if (rotationAllowed()) map.touchZoomRotate.enableRotation();
+      syncTerrainAndWind();
     });
 
     map.on("error", (e) => {
@@ -582,8 +648,10 @@ export default function MapView({
     });
 
     const windHeat = new WindHeatmapLayer();
+    const windFlow = new WindFlowLayer();
     const windArrows = new WindArrowLayer();
     windHeatRef.current = windHeat;
+    windFlowRef.current = windFlow;
     windArrowsRef.current = windArrows;
 
     map.on("load", async () => {
@@ -601,6 +669,7 @@ export default function MapView({
       } catch (e) {
         console.warn("[map] wind arrow icon failed to load", e);
       }
+      windFlow.attach(map);
       windArrows.attach(map);
 
       // DEM footprint outlines (all open mosaics) + optional Terrain-RGB / hillshade.
@@ -905,6 +974,9 @@ export default function MapView({
         if (map.getLayer("wind-heatmap-canvas") && map.getLayer("routes")) {
           map.moveLayer("wind-heatmap-canvas", "routes");
         }
+        for (const id of [WIND_FLOW_TAIL_LAYER_ID, WIND_FLOW_PARTICLE_LAYER_ID]) {
+          if (map.getLayer(id) && map.getLayer("routes")) map.moveLayer(id, "routes");
+        }
         if (map.getLayer("wind-arrows") && map.getLayer("routes")) {
           map.moveLayer("wind-arrows", "routes");
         }
@@ -917,28 +989,39 @@ export default function MapView({
 
       emitViewport();
       syncLocalData();
+      applyWindVizRef.current?.();
 
-      const depthVis = propsRef.current.showDepth ? "visible" : "none";
-      for (const id of ["depth-fill", "depth-line", "depth-label"]) {
-        if (map.getLayer(id)) {
-          map.setLayoutProperty(id, "visibility", depthVis);
-        }
-      }
+      setDepthOpacity(map, propsRef.current.showDepth);
     });
 
-    const debouncedViewport = debounce(() => {
+    const debouncedEmitViewport = debounce(() => {
       emitViewport();
-      syncTerrainAndWind();
-      const grid = windGridRef.current;
-      if (grid && propsRef.current.showWind && map.getPitch() <= WIND_HIDE_PITCH_DEG) {
-        windHeatRef.current?.syncViewport();
-        windArrowsRef.current?.setGrid(grid, { immediate: true });
-      }
-    }, 350);
+    }, 150);
 
-    map.on("moveend", debouncedViewport);
-    map.on("zoomend", debouncedViewport);
+    const applyWindViz = () => {
+      const m = mapRef.current;
+      const grid = windGridRef.current;
+      const windOn = !!grid && propsRef.current.showWind && windDataRef.current;
+
+      if (m) windArrowsRef.current?.setVisible(m, false);
+
+      if (windOn && grid) {
+        if (m) windFlowRef.current?.setVisible(m, true);
+        windFlowRef.current?.setGrid(grid);
+      } else {
+        if (m) windFlowRef.current?.setVisible(m, false);
+        windFlowRef.current?.setGrid(null);
+      }
+    };
+    applyWindVizRef.current = applyWindViz;
+    if (map.loaded()) applyWindViz();
+
+    map.on("moveend", () => {
+      debouncedEmitViewport();
+      syncTerrainAndWind();
+    });
     map.on("pitchend", () => {
+      applyRotationGate();
       syncTerrainAndWind();
       syncLocalData();
     });
@@ -1009,7 +1092,6 @@ export default function MapView({
       const m = mapRef.current;
       if (!m || !loadedRef.current) return;
 
-      const pitched = m.getPitch() > WIND_HIDE_PITCH_DEG;
       const zoom = m.getZoom();
       const b = m.getBounds();
       const tileBounds = terrainTileBoundsRef.current;
@@ -1023,8 +1105,14 @@ export default function MapView({
           [tileBounds],
         );
 
+      const windOn = propsRef.current.showWind && windDataRef.current;
+
+      let draped = false;
       if (terrainTilesReadyRef.current && m.getSource(TERRAIN_SOURCE_ID)) {
-        const wantMesh = zoom >= TERRAIN_MESH_MIN_ZOOM && overTerrainTiles;
+        const wantMesh =
+          zoom >= TERRAIN_MESH_MIN_ZOOM &&
+          overTerrainTiles &&
+          m.getPitch() > MESH_PITCH_MIN_DEG;
         const hasTerrain = m.getTerrain() != null;
         if (wantMesh && !hasTerrain) {
           m.setTerrain({
@@ -1033,8 +1121,8 @@ export default function MapView({
           });
         } else if (!wantMesh && hasTerrain) {
           m.setTerrain(null);
-          if (m.getPitch() > 0) m.easeTo({ pitch: 0, duration: 300 });
         }
+        draped = wantMesh;
         if (m.getLayer(TERRAIN_HILLSHADE_ID)) {
           m.setLayoutProperty(
             TERRAIN_HILLSHADE_ID,
@@ -1044,10 +1132,11 @@ export default function MapView({
         }
       }
 
-      // Canvas wind is screen-sampled into a geographic quad — wrong when pitched.
-      const windOn = propsRef.current.showWind && windDataRef.current && !pitched;
       windHeatRef.current?.setVisible(m, windOn);
-      windArrowsRef.current?.setVisible(m, windOn);
+      windHeatRef.current?.setDraped(m, draped);
+      windArrowsRef.current?.setVisible(m, false);
+      windFlowRef.current?.setTerrainActive(draped);
+      windFlowRef.current?.setVisible(m, windOn);
     }
 
     function syncLocalData() {
@@ -1116,6 +1205,7 @@ export default function MapView({
       hoverPopupRef.current?.remove();
       popupRef.current?.remove();
       windHeatRef.current?.destroy(map);
+      windFlowRef.current?.destroy(map);
       windArrowsRef.current?.destroy(map);
       map.remove();
       mapRef.current = null;
@@ -1146,7 +1236,7 @@ export default function MapView({
       windDataRef.current = false;
       windGridRef.current = null;
       windHeatRef.current?.setGrid(null);
-      windArrowsRef.current?.setGrid(null);
+      applyWindVizRef.current?.();
       syncLocalRef.current?.();
       return;
     }
@@ -1156,7 +1246,7 @@ export default function MapView({
       windDataRef.current = true;
       windGridRef.current = grid;
       windHeatRef.current?.setGrid(grid);
-      windArrowsRef.current?.setGrid(grid, { immediate: true });
+      applyWindVizRef.current?.();
       syncLocalRef.current?.();
       return;
     }
@@ -1164,7 +1254,7 @@ export default function MapView({
     windDataRef.current = false;
     windGridRef.current = null;
     windHeatRef.current?.setGrid(null);
-    windArrowsRef.current?.setGrid(null);
+    applyWindVizRef.current?.();
     syncLocalRef.current?.();
   }, [windSeries, windTimeUtc, showWind]);
 
@@ -1185,12 +1275,7 @@ export default function MapView({
   useEffect(() => {
     const m = mapRef.current;
     if (!m || !loadedRef.current) return;
-    const visibility = showDepth ? "visible" : "none";
-    for (const id of ["depth-fill", "depth-line", "depth-label"]) {
-      if (m.getLayer(id)) {
-        m.setLayoutProperty(id, "visibility", visibility);
-      }
-    }
+    setDepthOpacity(m, showDepth);
   }, [showDepth]);
 
   return <div id="map" ref={containerRef} />;

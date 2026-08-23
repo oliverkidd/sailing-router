@@ -1,12 +1,52 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Course, RouteProgressEvent, RouteProgressStep } from "@/lib/types";
+import type { Course, ModelRoute, RouteProgressEvent, RouteProgressStep } from "@/lib/types";
 
+/** Durations only — reject leaked wall-clock timestamps (~1e12). */
 function formatMs(ms?: number): string {
-  if (ms == null || !Number.isFinite(ms)) return "";
+  if (ms == null || !Number.isFinite(ms) || ms < 0 || ms > 1e11) return "";
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function formatEtaUtc(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  const day = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${mm} UTC · ${day}`;
+}
+
+function RouteSummaryStats({ route }: { route: ModelRoute }) {
+  const manoeuvres = route.n_tacks + route.n_gybes;
+  return (
+    <dl className="route-progress-summary">
+      <div>
+        <dt>Distance</dt>
+        <dd>{route.distance_nm.toFixed(1)} nm</dd>
+      </div>
+      <div>
+        <dt>ETA</dt>
+        <dd>{formatEtaUtc(route.eta_utc)}</dd>
+      </div>
+      <div>
+        <dt>Manoeuvres</dt>
+        <dd>
+          {manoeuvres}
+          <span className="route-progress-summary-sub">
+            {" "}
+            ({route.n_tacks} tack{route.n_tacks === 1 ? "" : "s"} · {route.n_gybes} gybe
+            {route.n_gybes === 1 ? "" : "s"})
+          </span>
+        </dd>
+      </div>
+    </dl>
+  );
 }
 
 function LiveElapsed({ active, startedAt }: { active: boolean; startedAt?: number }) {
@@ -37,10 +77,10 @@ function StatusIcon({ status }: { status: RouteProgressStep["status"] }) {
   return <span className="route-progress-icon route-progress-icon--pending" aria-hidden />;
 }
 
-function markLabel(course: Course, index: number): string {
-  const m = course.marks[index];
-  if (m?.name?.trim()) return m.name.trim();
-  return `Mark ${index + 1}`;
+function markLabel(_course: Course, index: number): string {
+  // Always match panel/map order (1…N). Do not trust sticky mark.name —
+  // those used to survive deletes and produced gaps like M3 → M5.
+  return `M${index + 1}`;
 }
 
 /** Ordered waypoint names for leg rows: Start, Mark 1…, Finish. */
@@ -106,9 +146,11 @@ export default function RouteProgress({
   warnings,
   showActions,
   retryableModelIds = [],
+  completedRoutes,
   onRetry,
   onRetryModel,
   onEdit,
+  onView,
 }: {
   steps: RouteProgressStep[];
   modelIds: string[];
@@ -117,15 +159,20 @@ export default function RouteProgress({
   showActions?: boolean;
   /** Models that can be retried independently (failed / unfinished). */
   retryableModelIds?: string[];
+  /** Successful routes — shown as a summary before dismissing the overlay. */
+  completedRoutes?: ModelRoute[];
   onRetry?: () => void;
   onRetryModel?: (modelId: string) => void;
   onEdit?: () => void;
+  onView?: () => void;
 }) {
   const hasError = steps.some((s) => s.status === "error") || !!showActions;
   const shared = steps.filter((s) => isSharedStep(s.id));
   const multi = modelIds.length > 1;
   const visibleWarnings = (warnings ?? []).filter((w) => !isForecastExhaustedWarning(w));
   const retrySet = new Set(retryableModelIds);
+  const routeByModel = new Map((completedRoutes ?? []).map((r) => [r.model_id, r]));
+  const showDone = (completedRoutes?.length ?? 0) > 0 && !!onView;
 
   return (
     <div className="route-progress">
@@ -145,6 +192,7 @@ export default function RouteProgress({
             const canRetry =
               !!onRetryModel &&
               (retrySet.has(mid) || modelSteps.some((s) => s.status === "error"));
+            const doneRoute = routeByModel.get(mid);
             return (
               <div key={mid} className="route-progress-model-card">
                 <div className="route-progress-model-head">
@@ -162,6 +210,7 @@ export default function RouteProgress({
                   )}
                 </div>
                 <StepList steps={modelSteps} />
+                {doneRoute && <RouteSummaryStats route={doneRoute} />}
               </div>
             );
           })}
@@ -169,6 +218,7 @@ export default function RouteProgress({
       ) : (
         <>
           <StepList steps={steps.filter((s) => !isSharedStep(s.id))} />
+          {completedRoutes?.[0] && <RouteSummaryStats route={completedRoutes[0]} />}
           {modelIds.length === 1 &&
             onRetryModel &&
             (retrySet.has(modelIds[0]) ||
@@ -200,6 +250,17 @@ export default function RouteProgress({
           ))}
           {visibleWarnings.length > 4 && <li>+{visibleWarnings.length - 4} more…</li>}
         </ul>
+      )}
+      {showDone && (
+        <div className="route-progress-actions">
+          <button
+            type="button"
+            className="route-progress-btn route-progress-btn--primary"
+            onClick={onView}
+          >
+            View routes
+          </button>
+        </div>
       )}
       {hasError && multi && onEdit && (
         <div className="route-progress-actions">
@@ -241,15 +302,16 @@ export default function RouteProgress({
 
 /** Mark sibling actives done only within the same model (or shared scope). */
 function clearActiveInScope(steps: RouteProgressStep[], scopeModelId: string | null, exceptId: string) {
+  const now = Date.now();
   for (const s of steps) {
     if (s.id === exceptId || s.status !== "active") continue;
     const mid = modelIdFromStep(s.id);
-    if (scopeModelId == null) {
-      // Shared stage (land/depth): only clear other shared actives
-      if (isSharedStep(s.id)) s.status = "done";
-    } else if (mid === scopeModelId) {
-      s.status = "done";
-    }
+    const inScope =
+      scopeModelId == null ? isSharedStep(s.id) : mid === scopeModelId;
+    if (!inScope) continue;
+    // active.ms is a start timestamp — convert to duration before marking done.
+    s.ms = s.ms != null ? Math.max(0, now - s.ms) : undefined;
+    s.status = "done";
   }
 }
 

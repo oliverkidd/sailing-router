@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Course, Mark } from "@/lib/types";
-import { isPointSet } from "@/lib/mapOverlays";
+import { isPointSet, withSequentialMarkNames } from "@/lib/mapOverlays";
 import {
   decimalToDm,
   dmToDecimal,
@@ -73,7 +73,7 @@ export default function CourseEditor({
   const removeMark = (index: number) => {
     onCourseChange({
       ...course,
-      marks: course.marks.filter((_, i) => i !== index),
+      marks: withSequentialMarkNames(course.marks.filter((_, i) => i !== index)),
     });
   };
 
@@ -99,7 +99,10 @@ export default function CourseEditor({
 
   const reorderMarks = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0) return;
-    onCourseChange({ ...course, marks: reorderPreview(course.marks, from, to) });
+    onCourseChange({
+      ...course,
+      marks: withSequentialMarkNames(reorderPreview(course.marks, from, to)),
+    });
   };
 
   const previewMarks = useMemo(() => {

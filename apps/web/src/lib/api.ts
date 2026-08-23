@@ -8,6 +8,7 @@ import type {
   RouteProgressEvent,
   RouteRequest,
   RouteResponse,
+  TuningSchemaResponse,
 } from "./types";
 import type { MapBounds } from "./mapOverlays";
 
@@ -107,6 +108,7 @@ export const api = {
   },
   route: (body: RouteRequest) =>
     req<RouteResponse>("/route", { method: "POST", body: JSON.stringify(body) }),
+  tuningSchema: () => req<TuningSchemaResponse>("/route/tuning-schema"),
   /** Stream route progress via SSE (POST + fetch ReadableStream). */
   routeStream: async (
     body: RouteRequest,

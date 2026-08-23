@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,10 @@ from . import (
 )
 
 logger = logging.getLogger(__name__)
+
+# GDAL/rasterio datasets and ogr2ogr clips are not safe to run concurrently
+# (the lab fires 2–3 /route calls at once). One lock for all chart I/O.
+_GDAL_LOCK = threading.Lock()
 
 # Same EMODnet mosaic used for depth.pmtiles isobaths (chart region).
 _REGION_DEPTH_TIF = DATA_DIR / "geo" / "bathymetry" / "region_depth.tif"
@@ -135,6 +140,11 @@ def _filter_geojsonl_to_bbox(src: Path, bbox: BBox, out_path: Path) -> LandMask:
 
 def fetch_land_for_bbox(bbox: BBox, *, require_hires: bool = False) -> LandMask:
     """OSM chart land clipped to bbox (same polygons as coastline.pmtiles)."""
+    with _GDAL_LOCK:
+        return _fetch_land_for_bbox_unlocked(bbox, require_hires=require_hires)
+
+
+def _fetch_land_for_bbox_unlocked(bbox: BBox, *, require_hires: bool = False) -> LandMask:
     del require_hires  # always chart-grade OSM now
     import time  # noqa: PLC0415
 
@@ -242,6 +252,11 @@ def _open_region_depth():
 
 def fetch_depth_for_bbox(bbox: BBox, land: LandMask | None = None) -> DepthField:
     """DepthField window from region_depth.tif (single chart source)."""
+    with _GDAL_LOCK:
+        return _fetch_depth_for_bbox_unlocked(bbox, land)
+
+
+def _fetch_depth_for_bbox_unlocked(bbox: BBox, land: LandMask | None = None) -> DepthField:
     del land  # depth comes only from the mosaic; land is a separate mask
     import time  # noqa: PLC0415
 

@@ -1,7 +1,8 @@
 """/route: isochrone routing, one ModelRoute per model (wind-only).
 
 Uses the same ensure_wind_window pipeline as the map scrubber. When the
-isochrone hits forecast_exhausted, extends +3h on the same region and re-runs.
+isochrone hits forecast_exhausted, extends +3h on the same region and resumes
+from the paused frontier (completed marks are kept).
 Also exposes POST /route/stream (SSE) for live stage/leg progress.
 """
 
@@ -26,8 +27,9 @@ from ..field_service import ensure_wind_window
 from ..forecast.grib_source import ForecastRateLimitError
 from ..geo import COURSE_WIND_MARGIN_DEG, GeoContext, course_bbox
 from ..geo.fetch import fetch_depth_for_bbox, fetch_land_for_bbox
-from ..router import IsochroneRouter, ProgressCallback, RouterParams
-from ..schemas import ModelRoute, RouteRequest, RouteResponse
+from ..router import IsochroneRouter, ProgressCallback
+from ..schemas import ModelRoute, RouteRequest, RouteResponse, TuningSchemaResponse
+from ..tuning import build_router_params, tuning_schema
 from ..util.horizon import CHUNK_H, initial_route_horizon_h
 
 logger = logging.getLogger(__name__)
@@ -99,10 +101,7 @@ def _run_route(
         emit({"type": "error", "message": msg})
         return RouteResponse(routes=[], warnings=warnings)
 
-    params = RouterParams(
-        time_step_s=req.time_step_s,
-        heading_step_deg=req.heading_step_deg,
-    )
+    params = build_router_params(req)
 
     # Short upfront window; +3h extend covers longer courses without a 45s cold fetch.
     horizon_h = initial_route_horizon_h(req.course)
@@ -148,50 +147,53 @@ def _run_route(
             emit({"type": "warning", "message": msg})
             return None, local_warnings
 
+        # Soft hazard grid is unused — router construction is instant.
+        # Keep a prepare stage event so the UI progress pipeline stays stable.
+        emit(
+            {
+                "type": "stage",
+                "key": "prepare",
+                "model_id": model_id,
+                "status": "start",
+            }
+        )
+        t_prep = time.perf_counter()
+        engine = IsochroneRouter(
+            boat=boat,
+            wind=wind,
+            geo=geo,
+            params=params,
+            on_progress=on_progress,
+            model_id=model_id,
+        )
+        prep_ms = (time.perf_counter() - t_prep) * 1000
+        logger.info("route %s prepare %.0fms", model_id, prep_ms)
+        emit(
+            {
+                "type": "stage",
+                "key": "prepare",
+                "model_id": model_id,
+                "status": "done",
+                "ms": round(prep_ms, 1),
+            }
+        )
+
         route: ModelRoute | None = None
         for extend_round in range(_MAX_EXTEND_ROUNDS + 1):
-            # Soft hazard grid is disabled — router construction is instant.
-            # Keep a prepare stage event so the UI progress pipeline stays stable.
-            emit(
-                {
-                    "type": "stage",
-                    "key": "prepare",
-                    "model_id": model_id,
-                    "status": "start",
-                }
-            )
-            t_prep = time.perf_counter()
-            engine = IsochroneRouter(
-                boat=boat,
-                wind=wind,
-                geo=geo,
-                params=params,
-                on_progress=on_progress,
-                model_id=model_id,
-            )
-            prep_ms = (time.perf_counter() - t_prep) * 1000
-            logger.info("route %s prepare %.0fms", model_id, prep_ms)
-            emit(
-                {
-                    "type": "stage",
-                    "key": "prepare",
-                    "model_id": model_id,
-                    "status": "done",
-                    "ms": round(prep_ms, 1),
-                }
-            )
             t_iso = time.perf_counter()
-            route = engine.route(req.course, model_id)
+            resume = extend_round > 0 and engine.can_resume
+            route = engine.route(req.course, model_id, resume=resume)
             logger.info(
-                "route %s isochrone round=%d exhausted=%s %.0fms",
+                "route %s isochrone round=%d resume=%s exhausted=%s %.0fms",
                 model_id,
                 extend_round,
+                resume,
                 route.forecast_exhausted,
                 (time.perf_counter() - t_iso) * 1000,
             )
             if not route.forecast_exhausted:
                 break
-            if extend_round >= _MAX_EXTEND_ROUNDS:
+            if extend_round >= _MAX_EXTEND_ROUNDS or not engine.can_resume:
                 last_h = int((wind.times[-1] - wind.times[0]) / 3600) if wind.n_times else 0
                 msg = (
                     f"{model_id}: forecast exhausted after {last_h}h "
@@ -252,6 +254,7 @@ def _run_route(
                 local_warnings.append(msg)
                 emit({"type": "warning", "message": msg})
                 break
+            engine.wind = wind
 
         if route is not None:
             for w in route.warnings:
@@ -313,6 +316,11 @@ def _run_route(
 @router.post("/route", response_model=RouteResponse)
 def compute_route(req: RouteRequest) -> RouteResponse:
     return _run_route(req)
+
+
+@router.get("/route/tuning-schema", response_model=TuningSchemaResponse)
+def get_tuning_schema() -> TuningSchemaResponse:
+    return tuning_schema()
 
 
 def _serialize_result(res: RouteResponse) -> dict[str, Any]:

@@ -1,8 +1,7 @@
 """Hazard reward/punish grid: soft time cost near shore and shoals.
 
-Unused by the live IsochroneRouter (product decision: depth is a hard
-min_depth + margin cutoff only). Kept for offline experiments / tests that
-pass an explicit HazardGrid into the router.
+Unused by IsochroneRouter (product: depth is a hard min+margin cutoff only).
+Kept for offline experiments.
 """
 
 from __future__ import annotations
