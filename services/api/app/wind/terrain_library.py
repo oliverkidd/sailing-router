@@ -13,6 +13,7 @@ power-of-2 overview pyramids are block-mean downsampled to avoid stride aliasing
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import threading
@@ -45,8 +46,10 @@ TERRAIN_DIR = Path(
         str(CACHE_DIR / "wind_terrain"),
     )
 )
-# Optional region-wide mosaic (preferred when present).
+# Optional region-wide mosaic (used when it intersects and is not an identity stub).
 REGION_LIBRARY = TERRAIN_DIR / "region" / "library.zarr"
+TILES_MANIFEST = TERRAIN_DIR / "tiles.json"
+REGION_STAMP = TERRAIN_DIR / ".region_complete"
 
 N_SECTORS = 16
 SECTOR_DEG = 360.0 / N_SECTORS
@@ -170,11 +173,159 @@ def _sector_weights(wind_dir_from_deg: float) -> tuple[int, int, float]:
 
 
 def library_available() -> bool:
-    return REGION_LIBRARY.exists() or any(TERRAIN_DIR.glob("tile_*/library.zarr"))
+    return any(_iter_library_paths())
+
+
+def _zarr_source(path: Path) -> str | None:
+    try:
+        import xarray as xr  # noqa: PLC0415
+
+        ds = xr.open_zarr(path)
+        try:
+            return str(ds.attrs.get("source", "unknown"))
+        finally:
+            ds.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _zarr_bbox(path: Path) -> BBox | None:
+    try:
+        import xarray as xr  # noqa: PLC0415
+
+        ds = xr.open_zarr(path)
+        try:
+            lats = np.asarray(ds["lat"].values, dtype=float)
+            lons = np.asarray(ds["lon"].values, dtype=float)
+            if lats.size < 2 or lons.size < 2:
+                return None
+            return BBox(
+                lat_min=float(lats[0]),
+                lon_min=float(lons[0]),
+                lat_max=float(lats[-1]),
+                lon_max=float(lons[-1]),
+            )
+        finally:
+            ds.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _bbox_dicts_intersect(bbox: BBox, entry: dict) -> bool:
+    return not (
+        bbox.lat_max < float(entry["lat_min"])
+        or bbox.lat_min > float(entry["lat_max"])
+        or bbox.lon_max < float(entry["lon_min"])
+        or bbox.lon_min > float(entry["lon_max"])
+    )
+
+
+def upsert_tile_manifest(rel_path: str, bbox: BBox, source: str) -> None:
+    TERRAIN_DIR.mkdir(parents=True, exist_ok=True)
+    tiles: list[dict] = []
+    if TILES_MANIFEST.exists():
+        try:
+            tiles = list(json.loads(TILES_MANIFEST.read_text(encoding="utf-8")).get("tiles", []))
+        except json.JSONDecodeError:
+            tiles = []
+    tiles = [t for t in tiles if t.get("path") != rel_path]
+    tiles.append(
+        {
+            "path": rel_path,
+            "lon_min": float(bbox.lon_min),
+            "lat_min": float(bbox.lat_min),
+            "lon_max": float(bbox.lon_max),
+            "lat_max": float(bbox.lat_max),
+            "source": source,
+        }
+    )
+    TILES_MANIFEST.write_text(
+        json.dumps({"tiles": tiles}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def seed_region_manifest() -> None:
+    """Register an existing region zarr so the Aegean bake still covers 24–26/37–39."""
+    if not REGION_LIBRARY.exists():
+        return
+    if TILES_MANIFEST.exists():
+        try:
+            tiles = json.loads(TILES_MANIFEST.read_text(encoding="utf-8")).get("tiles", [])
+        except json.JSONDecodeError:
+            tiles = []
+        if any(t.get("path") == "region/library.zarr" for t in tiles):
+            return
+    src = _zarr_source(REGION_LIBRARY)
+    if src in (None, "identity"):
+        return
+    bb = _zarr_bbox(REGION_LIBRARY)
+    if bb is None:
+        return
+    upsert_tile_manifest("region/library.zarr", bb, src)
+
+
+def _iter_library_paths() -> list[Path]:
+    seed_region_manifest()
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    if TILES_MANIFEST.exists():
+        try:
+            entries = json.loads(TILES_MANIFEST.read_text(encoding="utf-8")).get("tiles", [])
+        except json.JSONDecodeError:
+            entries = []
+        for entry in entries:
+            if entry.get("source") == "identity":
+                continue
+            p = TERRAIN_DIR / str(entry.get("path", ""))
+            if p.exists() and p not in seen:
+                paths.append(p)
+                seen.add(p)
+    for p in sorted(TERRAIN_DIR.glob("tile_*/library.zarr")):
+        if p not in seen:
+            paths.append(p)
+            seen.add(p)
+    if REGION_LIBRARY.exists() and REGION_LIBRARY not in seen:
+        if _zarr_source(REGION_LIBRARY) != "identity":
+            paths.append(REGION_LIBRARY)
+    return paths
+
+
+def _pick_library_path(bbox: BBox) -> Path | None:
+    """First intersecting non-identity library. Prefer tile_* over the region mosaic."""
+    seed_region_manifest()
+    ranked: list[Path] = []
+    if TILES_MANIFEST.exists():
+        try:
+            entries = json.loads(TILES_MANIFEST.read_text(encoding="utf-8")).get("tiles", [])
+        except json.JSONDecodeError:
+            entries = []
+        tiles_first = [e for e in entries if str(e.get("path", "")).startswith("tile_")]
+        rest = [e for e in entries if e not in tiles_first]
+        for entry in tiles_first + rest:
+            if entry.get("source") == "identity":
+                continue
+            if not _bbox_dicts_intersect(bbox, entry):
+                continue
+            p = TERRAIN_DIR / str(entry["path"])
+            if p.exists():
+                return p
+    for p in _iter_library_paths():
+        bb = _zarr_bbox(p)
+        if bb is None:
+            continue
+        if not (
+            bbox.lat_max < bb.lat_min
+            or bbox.lat_min > bb.lat_max
+            or bbox.lon_max < bb.lon_min
+            or bbox.lon_min > bb.lon_max
+        ):
+            ranked.append(p)
+    return ranked[0] if ranked else None
 
 
 # Process-local cache of fully decoded region/tile libraries (path + mtime).
-_FULL_LRU_MAX = 2
+_FULL_LRU_MAX = 4
 _full_lru: OrderedDict[str, tuple[float, _FullLibraryPack]] = OrderedDict()
 _full_guard = threading.Lock()
 
@@ -256,38 +407,23 @@ def library_meta_for_bbox(bbox: BBox) -> tuple[str, str] | None:
     Reads only attrs + lat/lon coords to test intersection. Version is the
     runtime LIBRARY_VERSION (sea-mask applied at load).
     """
-    paths: list[Path] = []
-    if REGION_LIBRARY.exists():
-        paths.append(REGION_LIBRARY)
-    else:
-        paths.extend(sorted(TERRAIN_DIR.glob("tile_*/library.zarr")))
+    path = _pick_library_path(bbox)
+    if path is None:
+        return None
+    try:
+        import xarray as xr  # noqa: PLC0415
 
-    for path in paths:
+        ds = xr.open_zarr(path)
         try:
-            import xarray as xr  # noqa: PLC0415
-
-            ds = xr.open_zarr(path)
-            try:
-                lats = np.asarray(ds["lat"].values, dtype=float)
-                lons = np.asarray(ds["lon"].values, dtype=float)
-                if lats.size < 2 or lons.size < 2:
-                    continue
-                if (
-                    bbox.lat_max < float(lats[0])
-                    or bbox.lat_min > float(lats[-1])
-                    or bbox.lon_max < float(lons[0])
-                    or bbox.lon_min > float(lons[-1])
-                ):
-                    if path == REGION_LIBRARY:
-                        return None
-                    continue
-                src = str(ds.attrs.get("source", "unknown"))
-                return src, LIBRARY_VERSION
-            finally:
-                ds.close()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("terrain meta peek failed for %s: %s", path, exc)
-    return None
+            src = str(ds.attrs.get("source", "unknown"))
+            if src == "identity":
+                return None
+            return src, LIBRARY_VERSION
+        finally:
+            ds.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("terrain meta peek failed for %s: %s", path, exc)
+        return None
 
 
 def _bbox_intersects_library(bbox: BBox, lib: TerrainLibrary) -> bool:
@@ -308,29 +444,21 @@ def load_library_for_bbox(bbox: BBox, *, overview: int = 1) -> TerrainLibrary | 
     Returns None when no library has been baked offline, or when bbox lies
     entirely outside every available library footprint.
     """
+    path = _pick_library_path(bbox)
+    if path is None:
+        return None
     step = max(1, int(overview))
-    cache_key = f"{bbox.key()}|o{step}|{LIBRARY_VERSION}"
+    mt = _zarr_mtime(path)
+    cache_key = f"{bbox.key()}|o{step}|{LIBRARY_VERSION}|{path}|{mt:.0f}"
     hit = _lib_cache_get(cache_key)
     if hit is not None:
         return hit
 
-    lib: TerrainLibrary | None = None
-    if REGION_LIBRARY.exists():
-        try:
-            lib = _window_from_path(REGION_LIBRARY, bbox, overview=step)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("terrain library load failed: %s", exc)
-            lib = None
-    else:
-        tiles = sorted(TERRAIN_DIR.glob("tile_*/library.zarr"))
-        for tile in tiles:
-            try:
-                candidate = _window_from_path(tile, bbox, overview=step)
-                if candidate is not None and candidate.available:
-                    lib = candidate
-                    break
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("skip terrain tile %s: %s", tile, exc)
+    try:
+        lib = _window_from_path(path, bbox, overview=step)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("terrain library load failed: %s", exc)
+        return None
 
     if lib is not None and lib.available:
         _lib_cache_put(cache_key, lib)
@@ -349,6 +477,11 @@ def _window_from_path(
 
 def _sea_mask_sidecar(path: Path, nlat: int, nlon: int) -> Path:
     return path.parent / f"sea_mask_{LIBRARY_VERSION}_{nlat}x{nlon}.npz"
+
+
+def warm_sea_mask(path: Path, lats: np.ndarray, lons: np.ndarray) -> None:
+    """Build (or reuse) the sea-mask sidecar next to a library Zarr."""
+    _load_or_build_land_mask(path, lats, lons)
 
 
 def _load_or_build_land_mask(

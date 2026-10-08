@@ -77,8 +77,8 @@ export async function fetchWindArea(
   if (zoom != null && Number.isFinite(zoom)) {
     extra.zoom = String(zoom);
   }
-  if (terrain === false) {
-    extra.terrain = "false";
+  if (terrain != null) {
+    extra.terrain = terrain ? "true" : "false";
   }
   if (corridor) {
     extra.corridor = "true";
@@ -162,8 +162,8 @@ export async function fetchWindAreaStream(
   if (zoom != null && Number.isFinite(zoom)) {
     extra.zoom = String(zoom);
   }
-  if (terrain === false) {
-    extra.terrain = "false";
+  if (terrain != null) {
+    extra.terrain = terrain ? "true" : "false";
   }
   if (corridor) {
     extra.corridor = "true";
@@ -291,6 +291,11 @@ export function mergeSeries(a: WindSeries, b: WindSeries): WindSeries {
     speed_kn: times.map((t) => byTime.get(t)!.speed_kn),
     model_id: b.model_id ?? a.model_id,
     bbox: b.bbox ?? a.bbox,
+    zoom_tier: b.zoom_tier ?? a.zoom_tier,
+    target_res_deg: b.target_res_deg ?? a.target_res_deg,
+    terrain_applied: b.terrain_applied ?? a.terrain_applied,
+    terrain_library: b.terrain_library ?? a.terrain_library,
+    terrain_library_version: b.terrain_library_version ?? a.terrain_library_version,
   };
 }
 

@@ -16,7 +16,7 @@ REGION_BBOX = {
     "lat_max": 72.0,
 }
 
-# Isle of Wight / Solent — style preview before full-region Overpass crawl.
+# Isle of Wight / Solent — CLI --sample / routing tests (not a map overlay).
 SAMPLE_BBOX = {
     "lon_min": -1.75,
     "lat_min": 50.55,
@@ -24,12 +24,20 @@ SAMPLE_BBOX = {
     "lat_max": 50.95,
 }
 
-# Kea / Kythnos / Syros — WindNinja terrain-response test area.
+# Kea / Kythnos / Syros — small clip kept for scripts that still pass --bbox.
 CYCLADES_BBOX = {
     "lon_min": 24.3,
     "lat_min": 37.2,
     "lon_max": 25.2,
     "lat_max": 38.0,
+}
+
+# Four GLO-30 1° tiles (N37–N38, E024–E025) used as the first proven bake.
+AEGEAN_DEM_BBOX = {
+    "lon_min": 24.0,
+    "lat_min": 37.0,
+    "lon_max": 26.0,
+    "lat_max": 39.0,
 }
 
 # Isobath levels (metres, positive-down) for depth.pmtiles.

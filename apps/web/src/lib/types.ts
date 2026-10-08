@@ -107,6 +107,8 @@ export interface ModelRoute {
   unreachable?: boolean;
   warnings?: string[];
   data_source?: Record<string, string>;
+  /** Advisory headland chain the router steered by, when guidance was on. */
+  waypoints?: LatLon[] | null;
 }
 
 export interface RouteResponse {

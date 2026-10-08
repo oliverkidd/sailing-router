@@ -112,7 +112,7 @@ export default function RouteReview({
 
       <button
         type="button"
-        onClick={onRun}
+        onClick={() => onRun()}
         disabled={!canRun}
         className="route-review-run"
         style={{

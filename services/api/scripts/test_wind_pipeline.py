@@ -182,6 +182,47 @@ def test_vectorised_downscale_matches_pointwise():
     print(f"OK vectorised downscale_grid (max_err={max_err:.2e})")
 
 
+def test_coastal_strip_keep():
+    """20 km keep includes harbour water and drops Sahara / Alpine interiors."""
+    from coastal_band import bbox_near_coast, crop_keep_slices, lonlat_in_coastal_keep
+
+    def bb(lon0: float, lat0: float) -> dict[str, float]:
+        return {
+            "lon_min": lon0,
+            "lat_min": lat0,
+            "lon_max": lon0 + 1.0,
+            "lat_max": lat0 + 1.0,
+        }
+
+    cases = [
+        ("Sahara N30 E010", bb(10.0, 30.0), False),
+        ("Alps N46 E008", bb(8.0, 46.0), False),
+        ("Cyclades N37 E024", bb(24.0, 37.0), True),
+        ("Solent N50 W002", bb(-2.0, 50.0), True),
+        ("Gulf of Sidra N31 E016", bb(16.0, 31.0), True),
+    ]
+    for name, b, expect in cases:
+        got = bbox_near_coast(b)
+        assert got is expect, f"{name}: near_coast={got} expected {expect}"
+
+    points = [
+        ("Sahara interior", 10.5, 30.5, False),
+        ("Kea-ish", 24.35, 37.62, True),
+        ("Alps interior", 8.4, 46.5, False),
+        ("Solent water", -1.3, 50.75, True),
+    ]
+    for name, lon, lat, expect in points:
+        got = lonlat_in_coastal_keep(lon, lat)
+        assert got is expect, f"{name} ({lon},{lat}): keep={got} expected {expect}"
+
+    keep = np.zeros((8, 10), dtype=bool)
+    keep[2:5, 3:7] = True
+    slat, slon = crop_keep_slices(keep, pad=1)
+    assert slat == slice(1, 6)
+    assert slon == slice(2, 8)
+    print("OK coastal strip keep (bbox + lon/lat + crop slices)")
+
+
 def test_cyclades_library_coastal_vs_sea():
     """If a baked Cyclades library exists, coastal/lee differs from mid-sea identity."""
     from app.wind.terrain_library import REGION_LIBRARY, load_library_for_bbox
@@ -240,6 +281,7 @@ def main() -> int:
     test_identity_library_roundtrip()
     test_roughness_speedup_factor()
     test_vectorised_downscale_matches_pointwise()
+    test_coastal_strip_keep()
     test_cyclades_library_coastal_vs_sea()
     print("\nAll wind pipeline tests passed.")
     return 0

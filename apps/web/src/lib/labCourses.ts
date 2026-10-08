@@ -9,9 +9,32 @@ export interface LabCourse {
   course: Course;
 }
 
-// Mid-channel, not the towns — Yarmouth village and Cowes harbour are dry/too shallow.
-const YARMOUTH: LatLon = [50.73, -1.505];
-const COWES: LatLon = [50.778, -1.3];
+/**
+ * Mid-channel fixes, not the towns — Yarmouth, Cowes harbour, Newtown creek and
+ * Ryde Sands all dry or shoal under the 3 m default clearance, so a start or
+ * mark placed on the settlement itself is unroutable.
+ */
+const NEEDLES_CHANNEL: LatLon = [50.705, -1.575];
+const HURST_NARROWS: LatLon = [50.712, -1.54];
+const YARMOUTH_ROADS: LatLon = [50.73, -1.505];
+const NEWTOWN_APPROACH: LatLon = [50.735, -1.415];
+const COWES_ROADS: LatLon = [50.775, -1.31];
+const OSBORNE_CHANNEL: LatLon = [50.767, -1.24];
+const SPITHEAD: LatLon = [50.762, -1.14];
+const NEEDLES: LatLon = [50.655, -1.615];
+const ST_CATHERINES: LatLon = [50.555, -1.3];
+const DUNNOSE_OFFING: LatLon = [50.585, -1.14];
+const SOUTH_SE: LatLon = [50.5, -1.1];
+const SOUTH_VENTNOR: LatLon = [50.52, -1.28];
+const SOUTH_ATHERFIELD: LatLon = [50.5, -1.45];
+const SOUTH_SW: LatLon = [50.53, -1.6];
+
+/** Windward–leeward lap axis in the 16 m mid-Solent channel, clear of Bramble Bank. */
+const LAP_LEEWARD: LatLon = [50.75, -1.415];
+const LAP_WINDWARD: LatLon = [50.756, -1.372];
+const LAP_OFFSET: LatLon = [50.758, -1.374];
+const LAP_COUNT = 4;
+
 const SOLENT_TWD_FALLBACK = 270; // westerly — beat is east → west
 
 function mark(position: LatLon, radiusNm: number, name: string): Mark {
@@ -35,6 +58,20 @@ function course(
   };
 }
 
+/** Ordered fixes → course; every interior point becomes a loose gate mark. */
+function chainCourse(
+  chain: LatLon[],
+  departUtc: string,
+  gateRadiusNm: number,
+  extra?: Partial<Course>,
+): Course {
+  const interior = chain.slice(1, -1);
+  return course(chain[0], chain[chain.length - 1], departUtc, {
+    marks: interior.map((p, i) => mark(p, gateRadiusNm, `M${i + 1}`)),
+    ...extra,
+  });
+}
+
 function absCircDiff(a: number, b: number): number {
   const d = Math.abs(a - b) % 360;
   return d > 180 ? 360 - d : d;
@@ -50,75 +87,84 @@ function bearingDeg(a: LatLon, b: LatLon): number {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-/** Pick start/finish so the leg is upwind (toward TWD) or downwind. */
-function orientPair(
-  west: LatLon,
-  east: LatLon,
-  twd: number,
-  wantUpwind: boolean,
-): { start: LatLon; finish: LatLon } {
-  const eastbound = bearingDeg(west, east);
-  const westbound = bearingDeg(east, west);
-  const eastIsUpwind = absCircDiff(eastbound, twd) <= absCircDiff(westbound, twd);
-  const upwind = eastIsUpwind
-    ? { start: west, finish: east }
-    : { start: east, finish: west };
-  if (wantUpwind) return upwind;
-  return { start: upwind.finish, finish: upwind.start };
+/** Order a chain so its overall axis points upwind (toward TWD) or downwind. */
+function orientChain(chain: LatLon[], twd: number, wantUpwind: boolean): LatLon[] {
+  const last = chain.length - 1;
+  const forward = bearingDeg(chain[0], chain[last]);
+  const reverse = bearingDeg(chain[last], chain[0]);
+  const forwardIsUpwind = absCircDiff(forward, twd) <= absCircDiff(reverse, twd);
+  const upwind = forwardIsUpwind ? chain : [...chain].reverse();
+  return wantUpwind ? upwind : [...upwind].reverse();
+}
+
+/** Repeating windward / offset / leeward roundings, finishing back at leeward. */
+function sausageMarks(laps: number): Mark[] {
+  const out: Mark[] = [];
+  for (let lap = 1; lap <= laps; lap++) {
+    out.push(mark(LAP_WINDWARD, 0.05, `W${lap}`));
+    out.push(mark(LAP_OFFSET, 0.05, `O${lap}`));
+    if (lap < laps) out.push(mark(LAP_LEEWARD, 0.05, `L${lap}`));
+  }
+  return out;
 }
 
 export function buildLabCourses(twd: number | null, departUtc: string): LabCourse[] {
   const wind = twd == null || !Number.isFinite(twd) ? SOLENT_TWD_FALLBACK : twd;
-  const beat = orientPair(YARMOUTH, COWES, wind, true);
-  const run = orientPair(YARMOUTH, COWES, wind, false);
+  const axis = [YARMOUTH_ROADS, COWES_ROADS, OSBORNE_CHANNEL, SPITHEAD];
+  const beat = orientChain(axis, wind, true);
+  const run = orientChain(axis, wind, false);
 
   return [
     {
       id: "solent-upwind",
-      title: "Western Solent beat",
-      blurb: "Yarmouth Roads ↔ Cowes, oriented upwind for the current GFS TWD.",
-      course: course(beat.start, beat.finish, departUtc),
+      title: "Solent beat (~14 nm)",
+      blurb:
+        "Yarmouth Roads · Cowes · Osborne · Spithead, ordered upwind for the current GFS TWD. About 3 h of beating, so it crosses several forecast hours.",
+      course: chainCourse(beat, departUtc, 0.3),
     },
     {
       id: "solent-downwind",
-      title: "Western Solent run",
-      blurb: "Same axis reversed — a downwind / reaching return.",
-      course: course(run.start, run.finish, departUtc),
+      title: "Solent run (~14 nm)",
+      blurb: "Same axis reversed — a downwind / broad-reaching return over the same forecast window.",
+      course: chainCourse(run, departUtc, 0.3),
     },
     {
       id: "cowes-short",
-      title: "Cowes short-leg",
-      blurb: "Tight angles and close marks just north of Cowes.",
-      course: course([50.778, -1.31], [50.775, -1.29], departUtc, {
-        marks: [
-          mark([50.785, -1.295], 0.05, "M1"),
-          mark([50.78, -1.28], 0.05, "M2"),
-        ],
+      title: "Sausage laps (~14 nm)",
+      blurb: `${LAP_COUNT} windward/leeward laps with an offset mark in the mid-Solent channel — close marks and tight roundings, repeated until it spans two forecast hours.`,
+      course: course(LAP_LEEWARD, LAP_LEEWARD, departUtc, {
+        marks: sausageMarks(LAP_COUNT),
       }),
     },
     {
       id: "south-reach",
-      title: "South-side reach",
-      blurb: "Long open reaching legs south of the island, well offshore.",
-      course: course([50.545, -1.20], [50.55, -1.53], departUtc, {
-        marks: [mark([50.535, -1.35], 0.12, "M1")],
-      }),
+      title: "South-side reach (~20 nm)",
+      blurb: "Open reaching legs well offshore of the island's south coast — deep water, no obstructions.",
+      course: chainCourse(
+        [SOUTH_SE, SOUTH_VENTNOR, SOUTH_ATHERFIELD, SOUTH_SW],
+        departUtc,
+        0.2,
+      ),
     },
     {
       id: "hurst-shallow",
-      title: "Hurst Narrows",
-      blurb: "Narrow, shallow passage from the Needles Channel toward Newtown.",
-      course: course([50.705, -1.575], [50.745, -1.43], departUtc, {
-        marks: [mark([50.712, -1.54], 0.08, "M1")],
-        min_depth_m: 1.5,
-      }),
+      title: "Hurst Narrows and back (~19 nm)",
+      blurb:
+        "Round Hurst Spit out of the Needles Channel, up to Newtown and Cowes, then back west. Shallow clearance (1.5 m) both ways through the narrows.",
+      course: chainCourse(
+        [NEEDLES_CHANNEL, HURST_NARROWS, NEWTOWN_APPROACH, COWES_ROADS, YARMOUTH_ROADS],
+        departUtc,
+        0.15,
+        { min_depth_m: 1.5 },
+      ),
     },
     {
       id: "needles-headland",
-      title: "Needles rounding",
-      blurb: "Headland rounding of the Needles, then east along the south shore.",
-      course: course([50.705, -1.575], [50.64, -1.48], departUtc, {
-        marks: [mark([50.662, -1.62], 0.2, "Needles")],
+      title: "Needles to Dunnose (~23 nm)",
+      blurb:
+        "Round the Needles out of the Needles Channel, then south-east past St Catherine's to Dunnose — a real headland with land across the rhumb line.",
+      course: course(NEEDLES_CHANNEL, DUNNOSE_OFFING, departUtc, {
+        marks: [mark(NEEDLES, 0.25, "Needles"), mark(ST_CATHERINES, 0.3, "St Catherine's")],
       }),
     },
   ];

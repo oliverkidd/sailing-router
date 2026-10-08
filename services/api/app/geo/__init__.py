@@ -51,6 +51,8 @@ class LandMask:
         polys = polygons or []
         self._mp = MultiPolygon([p for p in polys]) if polys else MultiPolygon()
         self._prepared = prep(self._mp) if not self._mp.is_empty else None
+        # ~110 m cells — enough to collapse repeated segment samples.
+        self._cell_cache: dict[tuple[int, int], bool] = {}
 
     @classmethod
     def from_geojson(cls, path: str | Path) -> LandMask:
@@ -76,6 +78,11 @@ class LandMask:
     def polygons(self) -> list[Polygon]:
         return [] if self._mp.is_empty else list(self._mp.geoms)
 
+    @property
+    def geometry(self) -> MultiPolygon:
+        """Raw union geometry — for vectorised point-in-polygon rasterising."""
+        return self._mp
+
     def islands(self) -> list[tuple[float, float, float]]:
         out: list[tuple[float, float, float]] = []
         for poly in self.polygons:
@@ -88,7 +95,13 @@ class LandMask:
     def on_land(self, pos: LatLon) -> bool:
         if self._prepared is None:
             return False
-        return self._prepared.covers(Point(pos[1], pos[0]))
+        key = (int(pos[0] * 1000), int(pos[1] * 1000))
+        hit = self._cell_cache.get(key)
+        if hit is not None:
+            return hit
+        out = self._prepared.covers(Point(pos[1], pos[0]))
+        self._cell_cache[key] = out
+        return out
 
     def segment_crosses_land(self, a: LatLon, b: LatLon) -> bool:
         if self._prepared is None:
@@ -102,6 +115,9 @@ class DepthField:
     lats: np.ndarray
     lons: np.ndarray
     depth_m: np.ndarray
+    _cell_cache: dict[tuple[int, int], float] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     def depth(self, pos: LatLon) -> float:
         """Conservative depth (m, positive-down) at pos.
@@ -119,14 +135,20 @@ class DepthField:
             return 0.0
         i = int(np.clip(np.searchsorted(self.lats, lat) - 1, 0, self.lats.size - 2))
         j = int(np.clip(np.searchsorted(self.lons, lon) - 1, 0, self.lons.size - 2))
-        cells = [
+        key = (i, j)
+        hit = self._cell_cache.get(key)
+        if hit is not None:
+            return hit
+        cells = (
             self.depth_m[i, j],
             self.depth_m[i, j + 1],
             self.depth_m[i + 1, j],
             self.depth_m[i + 1, j + 1],
-        ]
+        )
         vals = [0.0 if not np.isfinite(v) or v < 0 else float(v) for v in cells]
-        return min(vals)
+        out = min(vals)
+        self._cell_cache[key] = out
+        return out
 
     def too_shallow(self, pos: LatLon, min_depth_m: float) -> bool:
         return self.depth(pos) < min_depth_m
@@ -187,7 +209,27 @@ class GeoContext:
 
 
 # Shared wind/geo margin for prepare + /route (corridor around the course).
-COURSE_WIND_MARGIN_DEG = 0.35
+# Compact coastal races (Middle Sea, Aegean) need ~1° of sea room past the
+# outermost mark so the waypoint chain is not pinned to a cape. Ocean-spanning
+# courses (Fastnet) already have sea room — see ``effective_course_margin_deg``.
+COURSE_WIND_MARGIN_DEG = 1.0
+# Lon/lat span above this → clamp margin to 0.5° (Fastnet-scale boxes).
+_LARGE_COURSE_SPAN_DEG = 6.0
+_LARGE_COURSE_MARGIN_DEG = 0.5
+
+
+def effective_course_margin_deg(
+    course: Course, margin_deg: float = COURSE_WIND_MARGIN_DEG
+) -> float:
+    """Pad for geo/wind bbox: full margin on compact courses, clamped on huge ones."""
+    pts = [course.start, course.finish, *[m.position for m in course.marks]]
+    span = max(
+        max(p[0] for p in pts) - min(p[0] for p in pts),
+        max(p[1] for p in pts) - min(p[1] for p in pts),
+    )
+    if span >= _LARGE_COURSE_SPAN_DEG:
+        return min(margin_deg, _LARGE_COURSE_MARGIN_DEG)
+    return margin_deg
 
 
 def course_bbox(course: Course, margin_deg: float = COURSE_WIND_MARGIN_DEG) -> BBox:
@@ -195,11 +237,12 @@ def course_bbox(course: Course, margin_deg: float = COURSE_WIND_MARGIN_DEG) -> B
     pts = [course.start, course.finish, *[m.position for m in course.marks]]
     lats = [p[0] for p in pts]
     lons = [p[1] for p in pts]
+    pad = effective_course_margin_deg(course, margin_deg)
     return BBox(
-        lat_min=min(lats) - margin_deg,
-        lon_min=min(lons) - margin_deg,
-        lat_max=max(lats) + margin_deg,
-        lon_max=max(lons) + margin_deg,
+        lat_min=min(lats) - pad,
+        lon_min=min(lons) - pad,
+        lat_max=max(lats) + pad,
+        lon_max=max(lons) + pad,
     )
 
 

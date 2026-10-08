@@ -105,10 +105,11 @@ def _slice_field_times(
 
 
 def _emit(on_progress: ProgressCallback | None, event: dict[str, Any]) -> None:
-    if event.get("type") == "stage" and event.get("status") == "done":
+    if event.get("type") == "stage":
         logger.info(
-            "wind stage %s ms=%s cache_hit=%s terrain_library=%s",
+            "wind stage %s %s ms=%s cache_hit=%s terrain_library=%s",
             event.get("key"),
+            event.get("status"),
             event.get("ms"),
             event.get("cache_hit"),
             event.get("terrain_library"),

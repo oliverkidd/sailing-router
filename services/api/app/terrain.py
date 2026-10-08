@@ -5,8 +5,8 @@ GeoTIFF to WindNinja (M6). rasterio is an optional native dependency; when it or
 the DEM is absent we degrade gracefully so the default Open-Meteo routing path
 never hard-fails.
 
-Opens every region mosaic and leftover 1° tiles under data/dem/ so lookups
-outside the alphabetically-first mosaic still resolve.
+Opens the full-region VRT when present, otherwise every region mosaic
+and leftover 1° tiles under data/dem/.
 """
 
 from __future__ import annotations
@@ -47,7 +47,10 @@ class TerrainProvider:
 
     @staticmethod
     def _default_dem() -> Path | None:
-        """Prefer a region mosaic; otherwise the first available tile."""
+        """Prefer the full-region VRT; otherwise a mosaic or the first tile."""
+        vrt = _DEM_DIR / "region_dem.vrt"
+        if vrt.exists():
+            return vrt
         mosaics = TerrainProvider._list_mosaics()
         if mosaics:
             return mosaics[0]
@@ -71,8 +74,11 @@ class TerrainProvider:
         if primary is not None:
             opened.add(primary)
 
-        # Open every other mosaic first (Cyclades + Solent + …), then leftover
-        # 1° tiles so lookups outside the primary mosaic still resolve.
+        # Full-region VRT already mosaics every 1° COG — do not open them again.
+        if self._dem_path is not None and self._dem_path.name == "region_dem.vrt":
+            return
+
+        # Open every other mosaic first (clip leftovers), then leftover 1° tiles.
         for f in self._list_mosaics() + self._list_tifs():
             try:
                 resolved = f.resolve()

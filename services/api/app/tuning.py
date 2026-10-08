@@ -26,6 +26,7 @@ _CATEGORIES = [
     "Wind sensitivity",
     "Depth & safety",
     "Near-mark & arrival",
+    "Waypoint guidance",
     "Boat",
 ]
 
@@ -82,6 +83,12 @@ _META: dict[str, tuple[str, str, str, float]] = {
     "fan_probe_mark_frac": ("Near-mark & arrival", "Fan probe mark frac", "Fan probe length as a fraction of mark_probe_nm.", 0.05),
     "finish_snap_radius_nm": ("Near-mark & arrival", "Finish snap radius (nm)", "Finish is treated as a mark with this radius.", 0.01),
     "mark_arrival_break_nm": ("Near-mark & arrival", "Mark arrival break (nm)", "Early-exit a commit when this close to the target.", 0.005),
+    "waypoint_guidance": ("Waypoint guidance", "Waypoint guidance", "Steer via a headland chain when land blocks the rhumb line, and measure remaining distance around it instead of straight through. Off = straight-line remaining, which makes the router thrash in bays.", 1),
+    "waypoint_clearance_nm": ("Waypoint guidance", "Waypoint clearance (nm)", "How far each waypoint is offset away from the nearest land or shoal.", 0.05),
+    "waypoint_corridor_margin_nm": ("Waypoint guidance", "Corridor margin (nm)", "Search box around the node→mark line. Widened automatically once if no path is found.", 0.5),
+    "waypoint_max_points": ("Waypoint guidance", "Max waypoints", "Cap on chain length; the flattest bends are dropped first.", 1),
+    "waypoint_grid_stride": ("Waypoint guidance", "Grid stride", "Downsample the depth raster before the path search. Higher is faster and coarser.", 1),
+    "waypoint_pass_nm": ("Waypoint guidance", "Waypoint pass (nm)", "Treat a waypoint as rounded once the boat is this close, even if the next one is not yet in sight. Too small and the boat can park on a headland it has already passed.", 0.05),
 }
 
 _BOAT_META: dict[str, tuple[str, str, str, float, float | None, float | None, bool]] = {

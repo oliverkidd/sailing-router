@@ -12,8 +12,6 @@ const UPSAMPLE_MIN = 2;
 const UPSAMPLE_MAX = 6;
 /** Baked layer opacity so terrain drape cannot double-apply raster-opacity. */
 const PIXEL_ALPHA = 118; // 235 * 0.5
-/** Extra raster-opacity while the terrain mesh is on (drape over-saturates at 1). */
-const DRAPED_OPACITY = 0.45;
 const MS_TO_KN = 1.943844;
 
 const LUT_MAX_KN = 60;
@@ -264,10 +262,10 @@ export class WindHeatmapLayer {
     map.setLayoutProperty(this.id, "visibility", visible ? "visible" : "none");
   }
 
-  /** Cheap paint-property flip — no canvas repaint. Counteracts drape over-saturation. */
-  setDraped(map: maplibregl.Map, draped: boolean) {
+  /** Terrain drape uses the same raster-opacity as 2D; PIXEL_ALPHA is the only fade. */
+  setDraped(map: maplibregl.Map, _draped: boolean) {
     if (!map.getLayer(this.id)) return;
-    map.setPaintProperty(this.id, "raster-opacity", draped ? DRAPED_OPACITY : 1);
+    map.setPaintProperty(this.id, "raster-opacity", 1);
   }
 
   destroy(map: maplibregl.Map) {

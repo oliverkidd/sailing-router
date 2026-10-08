@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -71,6 +71,14 @@ class PolarTable:
     tws: np.ndarray
     twa: np.ndarray
     speed: np.ndarray
+    # Quantised caches. A long race hits the same TWS hundreds of thousands of
+    # times; the table is immutable so a 0.05 kn / 0.25° bucket is safe.
+    _speed_cache: dict[tuple[int, int], float] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    _vmg_cache: dict[tuple[int, bool], tuple[float, float]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     @classmethod
     def from_csv(cls, text: str) -> PolarTable:
@@ -164,6 +172,12 @@ class PolarTable:
         if twa < self.twa[0]:
             return 0.0
 
+        # 0.05 kn × 0.25° buckets — well below polar/table resolution.
+        sk = (int(round(tws * 20.0)), int(round(twa * 4.0)))
+        hit = self._speed_cache.get(sk)
+        if hit is not None:
+            return hit
+
         # Below the lowest tabulated TWS, scale linearly toward zero (no phantom speed).
         low_air_factor = 1.0
         if tws < self.tws[0]:
@@ -190,19 +204,38 @@ class PolarTable:
         s11 = self.speed[it + 1, ia + 1]
         s0 = s00 * (1 - fa) + s01 * fa
         s1 = s10 * (1 - fa) + s11 * fa
-        val = s0 * (1 - ft) + s1 * ft
-        return float(max(0.0, val * low_air_factor))
+        val = float(max(0.0, (s0 * (1 - ft) + s1 * ft) * low_air_factor))
+        self._speed_cache[sk] = val
+        return val
 
     def best_vmg_angle(self, tws: float, upwind: bool) -> tuple[float, float]:
+        vk = (int(round(tws * 20.0)), upwind)
+        hit = self._vmg_cache.get(vk)
+        if hit is not None:
+            return hit
+
         if upwind:
             lo, hi = float(self.twa[0]), 90.0
         else:
             lo, hi = 90.0, float(self.twa[-1])
         angles = np.linspace(lo, hi, 181)
-        best_twa, best_vmg = angles[0], -1.0
-        for ang in angles:
-            bsp = self.speed_for(tws, float(ang))
-            vmg = bsp * abs(np.cos(np.radians(ang)))
-            if vmg > best_vmg:
-                best_vmg, best_twa = vmg, float(ang)
-        return best_twa, float(best_vmg)
+        # One TWS slice across the tabulated TWA grid, then sample the 181 angles.
+        low_air_factor = 1.0
+        if tws < self.tws[0]:
+            if self.tws[0] <= 0:
+                out = (float(angles[0]), 0.0)
+                self._vmg_cache[vk] = out
+                return out
+            low_air_factor = max(0.0, min(1.0, tws / self.tws[0]))
+        t = float(np.clip(tws, self.tws[0], self.tws[-1]))
+        it = int(np.searchsorted(self.tws, t) - 1)
+        it = max(0, min(it, self.tws.size - 2))
+        t0, t1 = self.tws[it], self.tws[it + 1]
+        ft = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+        bsp_grid = (self.speed[it] * (1.0 - ft) + self.speed[it + 1] * ft) * low_air_factor
+        bsp = np.interp(angles, self.twa, bsp_grid)
+        vmg = bsp * np.abs(np.cos(np.radians(angles)))
+        i = int(np.argmax(vmg))
+        out = (float(angles[i]), float(vmg[i]))
+        self._vmg_cache[vk] = out
+        return out

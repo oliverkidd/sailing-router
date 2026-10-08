@@ -2,9 +2,12 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LabMapRoute } from "@/components/LabMap";
 import LabParamsPanel from "@/components/LabParamsPanel";
+import LabTimeBar, { clockLabelUtc } from "@/components/LabTimeBar";
 import { api } from "@/lib/api";
 import { buildLabCourses, type LabCourse } from "@/lib/labCourses";
+import { forecastShift } from "@/lib/labForecast";
 import {
   appendLabRun,
   assembleRouteRequest,
@@ -21,8 +24,15 @@ import {
   type LabRunStore,
   type LabValues,
 } from "@/lib/labRuns";
-import { currentForecastHourUtc } from "@/lib/mapOverlays";
-import { fetchWindArea, hoursAheadIso, sampleGrid, sliceSeries } from "@/lib/meteoGrid";
+import { currentForecastHourUtc, legAtTime } from "@/lib/mapOverlays";
+import {
+  fetchWindArea,
+  hoursAheadIso,
+  sampleGrid,
+  sliceSeries,
+  type MeteoGrid,
+  type WindSeries,
+} from "@/lib/meteoGrid";
 import type { BoatConfig, RouteLeg, TuningSchemaResponse } from "@/lib/types";
 
 const LabMap = dynamic(() => import("@/components/LabMap"), { ssr: false });
@@ -38,17 +48,33 @@ const INITIAL_BOAT: BoatConfig = {
   polar_efficiency: 1,
 };
 
-const SOLENT_BBOX = {
-  lat_min: 50.7,
-  lon_min: -1.45,
-  lat_max: 50.8,
-  lon_max: -1.25,
+/** Covers every lab course (Needles Channel → Spithead, south coast → Solent). */
+const LAB_BBOX = {
+  lat_min: 50.42,
+  lon_min: -1.72,
+  lat_max: 50.86,
+  lon_max: -1.05,
 };
+
+/** Long enough for the slowest course plus headroom for a re-run. */
+const WIND_WINDOW_H = 12;
+/** Mid-Solent probe for the headline TWD that orients the beat/run pair. */
+const TWD_PROBE_LAT = 50.72;
+const TWD_PROBE_LON = -1.35;
+const HOUR_MS = 3_600_000;
+/** Keep the scrubber usable before any route exists. */
+const MIN_CLOCK_SPAN_H = 3;
 
 type CardStatus = "idle" | "running" | "ok" | "error";
 
 function twdFromUv(u: number, v: number): number {
   return ((Math.atan2(-u, -v) * 180) / Math.PI + 360) % 360;
+}
+
+function floorHourIso(iso: string): string {
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return iso;
+  return new Date(Math.floor(ms / HOUR_MS) * HOUR_MS).toISOString();
 }
 
 export default function RoutingLabPage() {
@@ -57,8 +83,11 @@ export default function RoutingLabPage() {
   const [values, setValues] = useState<LabValues>({});
   const [boat, setBoat] = useState<BoatConfig>(INITIAL_BOAT);
   const [twd, setTwd] = useState<number | null>(null);
-  const [windNote, setWindNote] = useState("Fetching GFS TWD…");
+  const [windNote, setWindNote] = useState("Fetching GFS wind…");
+  const [windSeries, setWindSeries] = useState<WindSeries | null>(null);
   const [departUtc, setDepartUtc] = useState(currentForecastHourUtc);
+  const [overlayTimeUtc, setOverlayTimeUtc] = useState(currentForecastHourUtc);
+  const [playing, setPlaying] = useState(false);
   const [store, setStore] = useState<LabRunStore>(emptyLabStore);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
@@ -110,26 +139,37 @@ export default function RoutingLabPage() {
       });
   }, [boat.polar_id]);
 
+  // One area fetch feeds both the headline TWD and every card's arrows.
   useEffect(() => {
     const ac = new AbortController();
     const hour = currentForecastHourUtc();
-    fetchWindArea(SOLENT_BBOX, "gfs", hour, hoursAheadIso(hour, 1), ac.signal, undefined, false)
+    fetchWindArea(
+      LAB_BBOX,
+      "gfs",
+      hour,
+      hoursAheadIso(hour, WIND_WINDOW_H),
+      ac.signal,
+      undefined,
+      false,
+    )
       .then((res) => {
         if (ac.signal.aborted) return;
         if (!res.series || res.series.times.length === 0) {
           setWindNote(res.error || "No GFS wind — using westerly 270°");
           return;
         }
-        const t = res.series.times[0];
-        const grid = sliceSeries(res.series, t);
-        const { u, v, speed } = sampleGrid(grid, 50.75, -1.35);
+        setWindSeries(res.series);
+        const grid = sliceSeries(res.series, res.series.times[0]);
+        const { u, v, speed } = sampleGrid(grid, TWD_PROBE_LAT, TWD_PROBE_LON);
         if (speed < 0.4) {
           setWindNote("GFS wind too light — using westerly 270°");
           return;
         }
         const deg = twdFromUv(u, v);
         setTwd(deg);
-        setWindNote(`TWD ${deg.toFixed(0)}° · GFS`);
+        setWindNote(
+          `TWD ${deg.toFixed(0)}° · ${speed.toFixed(0)} kn · ${res.series.times.length} h loaded`,
+        );
       })
       .catch((err: unknown) => {
         if (!ac.signal.aborted) {
@@ -156,6 +196,8 @@ export default function RoutingLabPage() {
     setRunning(true);
     const depart = currentForecastHourUtc();
     setDepartUtc(depart);
+    setOverlayTimeUtc(depart);
+    setPlaying(false);
     const courseList = buildLabCourses(twdRef.current, depart);
     setStatus(Object.fromEntries(courseList.map((c) => [c.id, "running"])));
     setErrors({});
@@ -197,6 +239,7 @@ export default function RoutingLabPage() {
           unreachable: Boolean(model.unreachable),
           warnings,
           legs: model.legs,
+          waypoints: model.waypoints ?? undefined,
         };
         setStatus((s) => ({ ...s, [lab.id]: model.unreachable ? "error" : "ok" }));
         if (model.unreachable) {
@@ -239,6 +282,28 @@ export default function RoutingLabPage() {
     const set = new Set(selectedIds);
     return store.runs.filter((r) => set.has(r.id)).sort((a, b) => a.seq - b.seq);
   }, [store.runs, selectedIds]);
+
+  // Clock spans depart → the latest ETA on screen, so every card shares one hour.
+  const clockEndUtc = useMemo(() => {
+    const departMs = new Date(departUtc).getTime();
+    let latest = departMs + MIN_CLOCK_SPAN_H * HOUR_MS;
+    for (const run of selectedRuns) {
+      for (const res of Object.values(run.results)) {
+        const legs = res.legs;
+        if (!legs?.length) continue;
+        const end = new Date(legs[legs.length - 1].t_utc).getTime();
+        if (Number.isFinite(end) && end > latest) latest = end;
+      }
+    }
+    return new Date(latest).toISOString();
+  }, [departUtc, selectedRuns]);
+
+  const windGrid = useMemo(
+    () => (windSeries ? sliceSeries(windSeries, overlayTimeUtc) : null),
+    [windSeries, overlayTimeUtc],
+  );
+
+  const scrubHourUtc = useMemo(() => floorHourIso(overlayTimeUtc), [overlayTimeUtc]);
 
   const canRun = Boolean(schema && boat.polar_id) && !running;
 
@@ -290,12 +355,23 @@ export default function RoutingLabPage() {
           <div className="lab-toolbar-meta">
             <span>GFS</span>
             <span>{windNote}</span>
-            <span>Depart {departUtc.replace("T", " ").replace(".000Z", "Z")}</span>
+            <span>Depart {clockLabelUtc(departUtc)}</span>
             {!boat.polar_id && <span className="lab-muted">Loading polar…</span>}
           </div>
           <button type="button" className="lab-run-btn" disabled={!canRun} onClick={() => void runAll()}>
             {running ? "Running…" : "Run all"}
           </button>
+        </div>
+        <div className="lab-clockbar">
+          <LabTimeBar
+            startUtc={departUtc}
+            endUtc={clockEndUtc}
+            valueUtc={overlayTimeUtc}
+            playing={playing}
+            onChange={setOverlayTimeUtc}
+            onPlayingChange={setPlaying}
+            note={windSeries ? undefined : "no wind loaded — arrows hidden"}
+          />
         </div>
         <div className="lab-grid">
           {courses.map((lab) => (
@@ -308,12 +384,19 @@ export default function RoutingLabPage() {
               status={status[lab.id] ?? "idle"}
               error={errors[lab.id]}
               onToggle={toggleRun}
+              windGrid={windGrid}
+              overlayTimeUtc={overlayTimeUtc}
+              scrubHourUtc={scrubHourUtc}
             />
           ))}
         </div>
       </main>
     </div>
   );
+}
+
+interface CardRoute extends LabMapRoute {
+  boat: RouteLeg | null;
 }
 
 function CourseCard({
@@ -324,6 +407,9 @@ function CourseCard({
   status,
   error,
   onToggle,
+  windGrid,
+  overlayTimeUtc,
+  scrubHourUtc,
 }: {
   lab: LabCourse;
   runs: LabRun[];
@@ -332,14 +418,30 @@ function CourseCard({
   status: CardStatus;
   error?: string;
   onToggle: (id: string) => void;
+  windGrid: MeteoGrid | null;
+  overlayTimeUtc: string;
+  scrubHourUtc: string;
 }) {
-  const mapRoutes = selectedRuns
-    .map((run) => {
+  const cardRoutes = useMemo(() => {
+    const out: CardRoute[] = [];
+    for (const run of selectedRuns) {
       const res = run.results[lab.id];
-      if (!res?.legs?.length) return null;
-      return { id: run.id, color: colorForRun(run.seq), legs: res.legs as RouteLeg[] };
-    })
-    .filter((x): x is { id: string; color: string; legs: RouteLeg[] } => x != null);
+      if (!res?.legs?.length) continue;
+      const at = legAtTime(res.legs, overlayTimeUtc);
+      out.push({
+        id: run.id,
+        color: colorForRun(run.seq),
+        legs: res.legs,
+        playhead: at ? { position: at.position, heading: at.heading ?? 0, index: at.index } : null,
+        waypoints: res.waypoints ?? null,
+        boat: at?.leg ?? null,
+      });
+    }
+    return out;
+  }, [selectedRuns, lab.id, overlayTimeUtc]);
+
+  const latestLegs = cardRoutes.length ? cardRoutes[cardRoutes.length - 1].legs : null;
+  const shift = useMemo(() => (latestLegs ? forecastShift(latestLegs) : null), [latestLegs]);
 
   return (
     <article className="lab-card">
@@ -353,9 +455,39 @@ function CourseCard({
         </span>
       </header>
       <div className="lab-card-map-wrap">
-        <LabMap course={lab.course} routes={mapRoutes} />
+        <LabMap course={lab.course} routes={cardRoutes} windGrid={windGrid} />
         {status === "running" && <div className="lab-map-overlay">Routing…</div>}
       </div>
+      {cardRoutes.some((r) => r.boat) && (
+        <div className="lab-boat-readout">
+          {cardRoutes.map((r) =>
+            r.boat ? (
+              <span key={r.id} className="lab-boat-line">
+                <span className="lab-run-dot" style={{ background: r.color }} />
+                TWD {Math.round(r.boat.twd)}° · {r.boat.tws.toFixed(1)} kn · TWA{" "}
+                {Math.round(Math.abs(r.boat.twa))}° · {r.boat.sog.toFixed(1)} kn SOG
+              </span>
+            ) : null,
+          )}
+        </div>
+      )}
+      {shift && shift.buckets.length > 0 && (
+        <div className="lab-hours">
+          {shift.buckets.map((b) => (
+            <span
+              key={b.hourUtc}
+              className={`lab-hour${b.hourUtc === scrubHourUtc ? " on" : ""}`}
+              title={`${b.label}: sailed ${b.distanceNm.toFixed(2)} nm in TWD ${b.twdDeg.toFixed(0)}° / ${b.twsKn.toFixed(1)} kn`}
+            >
+              <strong>{b.label}</strong> {b.distanceNm.toFixed(1)} nm · {Math.round(b.twdDeg)}°
+            </span>
+          ))}
+          <span className="lab-muted">
+            {shift.crossings} hour {shift.crossings === 1 ? "crossing" : "crossings"} · shift{" "}
+            {Math.round(shift.maxShiftDeg)}°
+          </span>
+        </div>
+      )}
       <div className="lab-chips">
         {runs.map((run) => (
           <label key={run.id} className={`lab-chip${selectedIds.includes(run.id) ? " on" : ""}`}>

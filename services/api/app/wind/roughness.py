@@ -75,32 +75,22 @@ def roughness_grid(
 def _land_mask_raster(
     bbox: BBox, lats: np.ndarray, lons: np.ndarray
 ) -> np.ndarray | None:
-    if not _LAND_CHART.exists():
-        return None
+    """Rasterize OSM land onto the library lattice.
+
+    Never json-load ``land_chart.geojson`` (~600 MB) on the request path —
+    ``fetch_land_for_bbox`` clips via ogr2ogr / a per-bbox cache instead.
+    """
+    from rasterio import features as rio_features  # noqa: PLC0415
+    from rasterio.transform import from_bounds  # noqa: PLC0415
+    from shapely.geometry import mapping  # noqa: PLC0415
+
+    from ..geo.fetch import ChartDataUnavailable, fetch_land_for_bbox  # noqa: PLC0415
+
     try:
-        import json  # noqa: PLC0415
-
-        from rasterio import features as rio_features  # noqa: PLC0415
-        from rasterio.transform import from_bounds  # noqa: PLC0415
-        from shapely.geometry import box, mapping, shape  # noqa: PLC0415
-
-        gj = json.loads(_LAND_CHART.read_text())
-        clip = box(bbox.lon_min, bbox.lat_min, bbox.lon_max, bbox.lat_max)
-        shapes = []
-        for feat in gj.get("features", []):
-            geom = feat.get("geometry")
-            if not geom:
-                continue
-            try:
-                g = shape(geom)
-                if not g.intersects(clip):
-                    continue
-                inter = g.intersection(clip)
-                if inter.is_empty:
-                    continue
-                shapes.append((mapping(inter), 1))
-            except Exception:  # noqa: BLE001
-                continue
+        land = fetch_land_for_bbox(bbox)
+        if land.is_empty:
+            return None
+        shapes = [(mapping(poly), 1) for poly in land.polygons]
         if not shapes:
             return None
 
@@ -120,6 +110,9 @@ def _land_mask_raster(
         if lats.size >= 2 and lats[0] < lats[-1]:
             mask_n = mask_n[::-1, :]
         return mask_n.astype(bool)
+    except ChartDataUnavailable as exc:
+        logger.warning("land mask raster skipped: %s", exc)
+        return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("land mask raster failed: %s", exc)
         return None

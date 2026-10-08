@@ -63,11 +63,14 @@ const ARTIFACTS = {
   demDir: path.join(root, "data/dem"),
   windTerrain: path.join(root, "data/cache/wind_terrain/region/library.zarr"),
   windStamp: path.join(root, "data/cache/wind_terrain/region/.complete"),
+  windRegionStamp: path.join(root, "data/cache/wind_terrain/.region_complete"),
   windNinjaBin: path.join(root, "tools/windninja/bin/WindNinja_cli"),
   windNinjaWrapper: path.join(root, "tools/windninja/bin/WindNinja"),
   windNinjaData: path.join(root, "tools/windninja/data"),
   terrainRgb: path.join(root, "apps/web/public/geo/terrain/tilejson.json"),
-  demCoverage: path.join(root, "apps/web/public/geo/dem_coverage.geojson"),
+  terrainRgbStamp: path.join(root, "data/cache/tiles_build/terrain_rgb/.region_complete"),
+  demVrt: path.join(root, "data/dem/region_dem.vrt"),
+  demStamp: path.join(root, "data/dem/.region_complete"),
 };
 
 function mb(p) {
@@ -83,13 +86,19 @@ function fileOk(p, minMb = 0.001) {
 }
 
 function demOk() {
-  if (!existsSync(ARTIFACTS.demDir)) return false;
-  return readdirSync(ARTIFACTS.demDir).some(
-    (f) => /\.tiff?$/i.test(f) && mb(path.join(ARTIFACTS.demDir, f)) > 0.1,
-  );
+  if (SAMPLE || CYCLADES) {
+    if (!existsSync(ARTIFACTS.demDir)) return false;
+    return readdirSync(ARTIFACTS.demDir).some(
+      (f) => /\.tiff?$/i.test(f) && mb(path.join(ARTIFACTS.demDir, f)) > 0.1,
+    );
+  }
+  return existsSync(ARTIFACTS.demStamp) || existsSync(ARTIFACTS.demVrt);
 }
 
 function windTerrainOk() {
+  if (!SAMPLE && !CYCLADES) {
+    return existsSync(ARTIFACTS.windRegionStamp);
+  }
   if (!existsSync(ARTIFACTS.windTerrain)) return false;
   if (existsSync(ARTIFACTS.windStamp)) {
     try {
@@ -193,12 +202,17 @@ const steps = {
     run: () => runPy(["scripts/build_depth_tiles.py", ...regionFlags()]),
   },
   "wind-terrain": {
-    title: "WindNinja terrain-response library (200 m)",
+    title: "WindNinja terrain-response library (400 m)",
     ready: () => windTerrainOk(),
     canRun: () => demOk(),
     run: async () => {
       // Clear identity / incomplete library so we rewrite cleanly.
-      if (existsSync(ARTIFACTS.windTerrain) && !windTerrainOk()) {
+      // Never delete the Aegean region mosaic during a full-chart bake.
+      if (
+        (SAMPLE || CYCLADES) &&
+        existsSync(ARTIFACTS.windTerrain) &&
+        !windTerrainOk()
+      ) {
         console.log("  clearing incomplete/identity terrain library…");
         rmSync(ARTIFACTS.windTerrain, { recursive: true, force: true });
         if (existsSync(ARTIFACTS.windStamp)) rmSync(ARTIFACTS.windStamp);
@@ -207,34 +221,43 @@ const steps = {
       const pyArgs = ["scripts/build_wind_terrain.py", ...regionFlags()];
       if (bin) {
         pyArgs.push("--windninja-bin", bin);
-      } else {
+      } else if (SAMPLE || CYCLADES) {
         console.warn(
           "  ⚠ WindNinja CLI not found — writing identity library.\n" +
             "    Then: npm run build-data -- --only install-windninja\n" +
             "    Then: npm run build-data -- --force wind-terrain",
         );
         pyArgs.push("--identity");
+      } else {
+        throw new Error(
+          "WindNinja CLI not found — full-chart bake requires the real solver",
+        );
       }
       await runPy(pyArgs);
-      mkdirSync(path.dirname(ARTIFACTS.windStamp), { recursive: true });
-      writeFileSync(
-        ARTIFACTS.windStamp,
-        JSON.stringify(
-          {
-            source: bin ? "windninja" : "identity-forced",
-            at: new Date().toISOString(),
-            sample: SAMPLE,
-            cyclades: CYCLADES,
-          },
-          null,
-          2,
-        ),
-      );
+      if (SAMPLE || CYCLADES) {
+        mkdirSync(path.dirname(ARTIFACTS.windStamp), { recursive: true });
+        writeFileSync(
+          ARTIFACTS.windStamp,
+          JSON.stringify(
+            {
+              source: bin ? "windninja" : "identity-forced",
+              at: new Date().toISOString(),
+              sample: SAMPLE,
+              cyclades: CYCLADES,
+            },
+            null,
+            2,
+          ),
+        );
+      }
     },
   },
   "terrain-rgb": {
-    title: "MapLibre Terrain-RGB tiles (Cyclades / active bbox)",
-    ready: () => fileOk(ARTIFACTS.terrainRgb, 0.0001) && fileOk(ARTIFACTS.demCoverage, 0.0001),
+    title: "MapLibre Terrain-RGB tiles (full chart, 1° COGs)",
+    ready: () =>
+      SAMPLE || CYCLADES
+        ? fileOk(ARTIFACTS.terrainRgb, 0.0001)
+        : existsSync(ARTIFACTS.terrainRgbStamp),
     canRun: () => demOk(),
     run: () => runPy(["scripts/build_terrain_rgb.py", ...regionFlags()]),
   },
@@ -289,7 +312,7 @@ async function runParallel(ids) {
 async function main() {
   console.log("══ MasterWind build-data ══");
   console.log(
-    `mode: ${CYCLADES ? "cyclades (Kea/Kythnos/Syros)" : SAMPLE ? "sample (Solent)" : "full region"}`,
+    `mode: ${CYCLADES ? "cyclades" : SAMPLE ? "sample (Solent)" : "full region"}`,
   );
   if (ONLY.size) console.log(`only: ${[...ONLY].join(", ")}`);
   if (FORCE.size) console.log(`force: ${[...FORCE].join(", ")}`);
@@ -312,13 +335,20 @@ async function main() {
   const wave1 = ["land-chart", "dem", "coastline", "depth"].filter(wants);
   const r1 = await runParallel(wave1);
 
-  // Wave 2 — wind library + map Terrain-RGB (both need dem)
-  const wave2 = ["wind-terrain", "terrain-rgb"].filter(wants);
+  // Wave 2 — Terrain-RGB then WindNinja (sequential on the full chart).
+  const wave2 = ["terrain-rgb", "wind-terrain"].filter(wants);
   if (wave2.includes("wind-terrain") && !windNinjaOk() && process.env.BUILD_WINDNINJA !== "0") {
     console.log("\n[build-data] WindNinja missing — attempting local CLI build…");
     await runStep("install-windninja");
   }
-  const r2 = await runParallel(wave2);
+  const r2 =
+    SAMPLE || CYCLADES
+      ? await runParallel(wave2)
+      : await (async () => {
+          const out = [];
+          for (const id of wave2) out.push(await runStep(id));
+          return out;
+        })();
 
   const all = [...r1, ...r2];
   console.log("\n══ Summary ══");

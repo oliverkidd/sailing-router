@@ -1,9 +1,9 @@
 /**
  * Viewport helpers for browse wind.
  *
- * Client sends the raw viewport (+ zoom); the server pads once for the forcing
- * cache and returns a zoom-tiered display window. Cache bookkeeping uses the
- * returned series.bbox (not a client-side regionBounds pad).
+ * Browse density is locked to a High-def toggle, not the camera zoom: standard
+ * uses the fine tier, High def uses ultra + WindNinja. The server still pads
+ * the request once; cache bookkeeping uses the returned series.bbox.
  */
 
 import type { MapBounds } from "./mapOverlays";
@@ -27,6 +27,14 @@ export function tierForZoom(zoom: number | null | undefined): ZoomTierName {
   if (z <= 9) return "mid";
   if (z <= 12) return "fine";
   return "ultra";
+}
+
+/** Synthetic /wind/area zoom: camera zoom must not change display density. */
+export const BROWSE_ZOOM_STANDARD = 11; // fine (~500 m)
+export const BROWSE_ZOOM_HIGH_DEF = 13; // ultra (~200 m)
+
+export function browseFetchZoom(highDef: boolean): number {
+  return highDef ? BROWSE_ZOOM_HIGH_DEF : BROWSE_ZOOM_STANDARD;
 }
 
 export function tierRank(tier: string | null | undefined): number {
@@ -86,8 +94,7 @@ export function bboxAreaDeg2(b: MapBounds): number {
 
 /**
  * True when the current zoom needs a finer display tier than the cached series.
- * Panning inside the same tier must NOT force a replace (ultra pad windows are
- * always much larger than the viewport, so an area-ratio check was wrong).
+ * Browse no longer upgrades density on zoom; kept for debug / older callers.
  */
 export function regionNeedsDenserReplace(
   cachedTier: string | null | undefined,

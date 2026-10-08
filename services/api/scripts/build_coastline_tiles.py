@@ -37,6 +37,7 @@ OSM_ROADS = WORK / "osm_roads.geojsonl"
 OSM_RIVERS = WORK / "osm_rivers.geojsonl"
 OSM_WATER = WORK / "osm_water.geojsonl"
 COASTLINE = WORK / "coastline.geojsonl"
+LAND_SEAMS = WORK / "land_seams.geojsonl"
 
 
 def _find_osm_shp() -> Path | None:
@@ -230,6 +231,96 @@ def _extract_coastline(land_path: Path, out_path: Path) -> int:
     return n
 
 
+# OSM land-polygons-split insets each cell ~0.0007° off the integer grid, so
+# neighbour edges are not coincident and the shared-segment pass above keeps
+# them. Drop those cuts here: axis-aligned and on (or ~1° long near) integers.
+_GRID_NEAR_INT = 0.002
+_GRID_AXIS_EPS = 1.5e-4
+_GRID_MIN_LEN = 0.08
+_GRID_LONG_LEN = 0.45
+
+
+def _near_integer_deg(v: float) -> bool:
+    return abs(v - round(v)) < _GRID_NEAR_INT
+
+
+def _is_split_grid_seg(a: list[float], b: list[float]) -> bool:
+    dx = abs(b[0] - a[0])
+    dy = abs(b[1] - a[1])
+    length = (dx * dx + dy * dy) ** 0.5
+    if length < _GRID_MIN_LEN:
+        return False
+    vertical = dx < _GRID_AXIS_EPS
+    horizontal = dy < _GRID_AXIS_EPS
+    if not vertical and not horizontal:
+        return False
+    if vertical and _near_integer_deg(a[0]) and _near_integer_deg(b[0]):
+        return True
+    if horizontal and _near_integer_deg(a[1]) and _near_integer_deg(b[1]):
+        return True
+    return length >= _GRID_LONG_LEN
+
+
+def _write_linestring(out, coords: list) -> None:
+    if len(coords) < 2:
+        return
+    feat = {
+        "type": "Feature",
+        "properties": {},
+        "geometry": {"type": "LineString", "coordinates": coords},
+    }
+    out.write(json.dumps(feat, separators=(",", ":")) + "\n")
+
+
+def _partition_split_grid(src: Path, coast_out: Path, seams_out: Path) -> tuple[int, int]:
+    """Split coastline lines into true shore vs OSM split-grid cuts."""
+    n_coast = 0
+    n_seams = 0
+    coast_tmp = coast_out.with_suffix(".part.tmp.geojsonl")
+    seams_tmp = seams_out.with_suffix(".part.tmp.geojsonl")
+    with src.open() as inp, coast_tmp.open("w") as coast_fh, seams_tmp.open("w") as seam_fh:
+        for line in inp:
+            line = line.strip()
+            if not line:
+                continue
+            geom = json.loads(line).get("geometry") or {}
+            gtype = geom.get("type")
+            if gtype == "LineString":
+                rings = [geom.get("coordinates") or []]
+            elif gtype == "MultiLineString":
+                rings = geom.get("coordinates") or []
+            else:
+                continue
+            for coords in rings:
+                if len(coords) < 2:
+                    continue
+                grid = _is_split_grid_seg(coords[0], coords[1])
+                run = [coords[0], coords[1]]
+                for i in range(2, len(coords)):
+                    nxt = _is_split_grid_seg(coords[i - 1], coords[i])
+                    if nxt == grid:
+                        run.append(coords[i])
+                        continue
+                    if grid:
+                        _write_linestring(seam_fh, run)
+                        n_seams += 1
+                    else:
+                        _write_linestring(coast_fh, run)
+                        n_coast += 1
+                    grid = nxt
+                    run = [coords[i - 1], coords[i]]
+                if grid:
+                    _write_linestring(seam_fh, run)
+                    n_seams += 1
+                else:
+                    _write_linestring(coast_fh, run)
+                    n_coast += 1
+    # Allow in-place replace of src.
+    coast_tmp.replace(coast_out)
+    seams_tmp.replace(seams_out)
+    return n_coast, n_seams
+
+
 def main() -> int:
     WORK.mkdir(parents=True, exist_ok=True)
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -297,6 +388,10 @@ def main() -> int:
     n_coast = _extract_coastline(land_path, COASTLINE)
     print(f"[coast] wrote {n_coast} coastline lines → {COASTLINE}")
 
+    print("[coast] partitioning integer-grid cuts → land_seams …", flush=True)
+    n_coast, n_seams = _partition_split_grid(COASTLINE, COASTLINE, LAND_SEAMS)
+    print(f"[coast] shore lines={n_coast} seam lines={n_seams} → {LAND_SEAMS}")
+
     archived = archive_output(OUT)
     if archived:
         print(f"[coast] archived previous tiles → {archived}")
@@ -321,6 +416,8 @@ def main() -> int:
         f"land:{land_path}",
         "-L",
         f"coastline:{COASTLINE}",
+        "-L",
+        f"land_seams:{LAND_SEAMS}",
         "-L",
         f"water:{OSM_WATER}",
         "-L",

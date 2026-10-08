@@ -1,0 +1,2128 @@
+<VRTDataset rasterXSize="164133" rasterYSize="72000">
+  <SRS dataAxisToSRSAxisMapping="2,1">GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AXIS["Latitude",NORTH],AXIS["Longitude",EAST],AUTHORITY["EPSG","4326"]]</SRS>
+  <GeoTransform> -1.1000208333333333e+01,  2.9244591125779227e-04,  0.0000000000000000e+00,  5.3000138888888891e+01,  0.0000000000000000e+00, -2.7777777777777778e-04</GeoTransform>
+  <VRTRasterBand dataType="Float32" band="1">
+    <ColorInterp>Gray</ColorInterp>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N33_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="68400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N33_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="68400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N33_00_E011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="75227.8236677116" yOff="68400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N33_00_E035_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="157294.281347962" yOff="68400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="75227.8236677116" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E023_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="116261.052507837" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E026_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="126519.359717868" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E032_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="147035.974137931" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E033_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="150455.409874608" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E034_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="153874.845611285" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E035_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="157294.281347962" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_E036_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3599.83910891079" ySize="3600" />
+      <DstRect xOff="160713.71708464" yOff="64800" xSize="3419.28291536041" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N34_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="64800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="37614.0305642633" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="75227.8236677116" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E023_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="116261.052507837" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E026_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="126519.359717868" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E027_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="129938.795454546" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E032_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="147035.974137931" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E033_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="150455.409874608" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E034_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="153874.845611285" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E035_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="157294.281347962" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_E036_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3599.83910891079" ySize="3600" />
+      <DstRect xOff="160713.71708464" yOff="61200" xSize="3419.28291536041" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="23936.2876175549" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="20516.8518808778" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="17097.4161442006" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N35_00_W007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="13677.9804075235" yOff="61200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="37614.0305642633" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="41033.4663009405" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="44452.9020376176" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="47872.3377742947" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="51291.7735109718" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="54711.2092476489" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="58130.6449843261" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="61550.0807210032" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="75227.8236677116" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E021_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="109422.181034483" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E022_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="112841.61677116" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E023_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="116261.052507837" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E026_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="126519.359717868" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E027_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="129938.795454546" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E028_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="133358.231191223" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E029_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="136777.6669279" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E030_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="140197.102664577" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E031_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="143616.538401254" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E032_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="147035.974137931" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E033_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="150455.409874608" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E034_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="153874.845611285" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E035_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="157294.281347962" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_E036_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3599.83910891079" ySize="3600" />
+      <DstRect xOff="160713.71708464" yOff="57600" xSize="3419.28291536041" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="23936.2876175549" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="20516.8518808778" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="17097.4161442006" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="13677.9804075235" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="10258.5446708464" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N36_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="57600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="58130.6449843261" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="61550.0807210032" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="75227.8236677116" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E016_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="92325.0023510972" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E020_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="106002.745297806" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E021_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="109422.181034483" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E022_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="112841.61677116" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E023_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="116261.052507837" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E026_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="126519.359717868" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E027_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="129938.795454546" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E028_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="133358.231191223" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E035_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="157294.281347962" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_E036_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3599.83910891079" ySize="3600" />
+      <DstRect xOff="160713.71708464" yOff="54000" xSize="3419.28291536041" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_W007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="13677.9804075235" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_W008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="10258.5446708464" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N37_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="54000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="37614.0305642633" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="41033.4663009405" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E016_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="92325.0023510972" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E017_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="95744.4380877744" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E020_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="106002.745297806" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E021_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="109422.181034483" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E023_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="116261.052507837" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E026_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="126519.359717868" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_E027_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="129938.795454546" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N38_00_W010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="3419.67319749216" yOff="50400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="37614.0305642633" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="41033.4663009405" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="44452.9020376176" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="47872.3377742947" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="51291.7735109718" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E016_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="92325.0023510972" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E017_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="95744.4380877744" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E018_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="99163.8738244515" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E019_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="102583.309561129" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E020_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="106002.745297806" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E022_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="112841.61677116" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E023_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="116261.052507837" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E026_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="126519.359717868" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_E027_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="129938.795454546" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N39_00_W010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="3419.67319749216" yOff="46800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="37614.0305642633" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="47872.3377742947" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="51291.7735109718" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E016_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="92325.0023510972" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E017_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="95744.4380877744" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E018_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="99163.8738244515" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E019_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="102583.309561129" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E020_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="106002.745297806" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E022_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="112841.61677116" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E023_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="116261.052507837" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E026_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="126519.359717868" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E030_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="140197.102664577" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_E031_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="143616.538401254" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N40_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="43200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="37614.0305642633" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="41033.4663009405" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="44452.9020376176" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="47872.3377742947" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="75227.8236677116" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E016_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="92325.0023510972" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E017_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="95744.4380877744" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E019_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="102583.309561129" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E024_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="119680.488244514" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E025_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="123099.923981191" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E027_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="129938.795454546" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E028_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="133358.231191223" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E029_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="136777.6669279" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E030_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="140197.102664577" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E031_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="143616.538401254" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E032_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="147035.974137931" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E033_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="150455.409874608" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E034_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="153874.845611285" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E035_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="157294.281347962" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_E036_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3599.83910891079" ySize="3600" />
+      <DstRect xOff="160713.71708464" yOff="39600" xSize="3419.28291536041" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N41_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="39600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="44452.9020376176" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="47872.3377742947" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="58130.6449843261" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="75227.8236677116" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E016_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="92325.0023510972" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E017_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="95744.4380877744" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E018_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="99163.8738244515" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_E019_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="102583.309561129" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N42_00_W010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="3419.67319749216" yOff="36000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="44452.9020376176" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="47872.3377742947" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="51291.7735109718" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="54711.2092476489" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="58130.6449843261" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="61550.0807210032" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E016_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="92325.0023510972" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_E017_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="95744.4380877744" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="23936.2876175549" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="20516.8518808778" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="17097.4161442006" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="13677.9804075235" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="10258.5446708464" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="6839.10893416928" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N43_00_W010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="3419.67319749216" yOff="32400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_E008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="64969.5164576803" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_E009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="68388.9521943574" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_E010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="71808.3879310345" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_E015_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="88905.5666144201" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N44_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="28800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N45_00_E012_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="78647.2594043888" yOff="25200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N45_00_E013_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="82066.6951410659" yOff="25200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N45_00_E014_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="85486.130877743" yOff="25200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N45_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="25200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N45_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="25200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N46_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="21600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N46_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="21600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N46_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="21600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N47_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="18000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N47_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="18000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N47_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="23936.2876175549" yOff="18000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N47_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="20516.8518808778" yOff="18000" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N48_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="14400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N48_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="14400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N48_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="23936.2876175549" yOff="14400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N48_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="20516.8518808778" yOff="14400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N48_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="17097.4161442006" yOff="14400" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N49_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="37614.0305642633" yOff="10800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N49_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="41033.4663009405" yOff="10800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N49_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="34194.5948275862" yOff="10800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N49_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="30775.1590909091" yOff="10800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N49_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="27355.723354232" yOff="10800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N49_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="17097.4161442006" yOff="10800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N49_00_W007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="3600" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="3600" ySize="3600" />
+      <DstRect xOff="13677.9804075235" yOff="10800" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="37613.7931034483" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="41033.2288401254" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_E002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="44452.6645768025" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="34194.3573667712" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_W002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="30774.9216300941" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="27355.4858934169" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="23936.0501567398" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="20516.6144200627" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N50_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="17097.1786833856" yOff="7200" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="37613.7931034483" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="41033.2288401254" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_E002_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="44452.6645768025" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_E003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="47872.1003134797" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_E004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="51291.5360501568" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W003_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="27355.4858934169" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="23936.0501567398" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="20516.6144200627" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="17097.1786833856" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="10258.3072100314" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W009_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="6838.87147335424" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="3419.43573667712" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N51_00_W011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="0" yOff="3600" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_E000_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="37613.7931034483" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_E001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="41033.2288401254" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W001_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="34194.3573667712" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W004_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="23936.0501567398" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W005_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="20516.6144200627" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W006_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="17097.1786833856" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W007_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="13677.7429467085" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W008_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="10258.3072100314" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W010_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="3419.43573667712" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="1">Copernicus_DSM_COG_10_N52_00_W011_00_DEM.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="2400" RasterYSize="3600" DataType="Float32" BlockXSize="1024" BlockYSize="1024" />
+      <SrcRect xOff="0" yOff="0" xSize="2400" ySize="3600" />
+      <DstRect xOff="0" yOff="0" xSize="3419.43573667712" ySize="3600" />
+    </SimpleSource>
+  </VRTRasterBand>
+</VRTDataset>

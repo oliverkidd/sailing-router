@@ -103,8 +103,11 @@ cd ../.. && make tiles
 make clean-tile-build
 ```
 
-For a deployed app, host the same PMTiles on object storage / a CDN and point
-the map at that URL instead of committing them to the repo.
+For a deployed app, host the same PMTiles on object storage / a CDN (GitHub
+rejects files over 100 MB) and set `NEXT_PUBLIC_CHART_BASE` in `apps/web/.env`
+to that origin, e.g. `https://cdn.example.com`. The map and offline voyage pack
+then fetch `/geo/coastline.pmtiles` and `/geo/depth.pmtiles` from there. Leave
+it unset for local same-origin `/geo/`.
 
 ### Individual processes
 

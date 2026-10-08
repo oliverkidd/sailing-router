@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,7 @@ from shapely.validation import make_valid
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from region import chart_bbox, use_sample  # noqa: E402
+from region import REGION_BBOX, chart_bbox, use_sample  # noqa: E402
 
 WORK = ROOT / "data" / "cache" / "tiles_build"
 LAND_PATH = WORK / "land.geojsonl"
@@ -528,6 +529,444 @@ def load_band_geom():
     if len(geoms) == 1:
         return geoms[0]
     return MultiPolygon(geoms)
+
+
+# Sailing charts only need relief / WindNinja near the sea. The band is 20 km
+# from the coastline: sea includes inlets whose mouth is within a few km of
+# the open ocean (Solent, Aegean gulfs). Lakes farther inland are not coast.
+_COAST_PAD_KM = 20.0
+_MOUTH_BRIDGE_KM = 3.0
+_KM_PER_DEG_LAT = 111.32
+# 0.01° keeps the Solent and island channels as water. 0.05° with all-touched
+# land painted those straits as land, so the band never saw their shoreline.
+_OCEAN_RES_DEG = 0.01
+_OCEAN_MASK = WORK / "ocean_mask_001.npz"
+_LAND_CHART = ROOT / "data" / "geo" / "osm" / "land_chart.geojson"
+_ocean_cache: dict | None = None
+
+_OCEAN_SEEDS = (
+    (-20.0, 50.0),
+    (-15.0, 45.0),
+    (-8.0, 32.0),
+    (0.0, 45.0),
+    (5.0, 36.0),
+    (12.0, 45.0),
+    (16.0, 42.0),
+    (18.0, 35.0),
+    (25.0, 37.0),
+    (28.0, 33.0),
+    (3.0, 56.0),
+    (20.0, 58.0),
+    (32.0, 43.0),
+    (-4.0, 50.0),
+)
+
+
+def _raster_shape() -> tuple[int, int, float, float, float]:
+    lon0 = float(REGION_BBOX["lon_min"])
+    lat0 = float(REGION_BBOX["lat_min"])
+    lon1 = float(REGION_BBOX["lon_max"])
+    lat1 = float(REGION_BBOX["lat_max"])
+    res = _OCEAN_RES_DEG
+    width = int(round((lon1 - lon0) / res))
+    height = int(round((lat1 - lat0) / res))
+    return height, width, lon0, lat1, res
+
+
+def _rasterize_land_chart(height: int, width: int, lon0: float, lat1: float, res: float):
+    import numpy as np  # noqa: PLC0415
+    import rasterio  # noqa: PLC0415
+
+    if not _LAND_CHART.exists():
+        raise FileNotFoundError(f"land chart missing: {_LAND_CHART}")
+    gdal_rasterize = shutil.which("gdal_rasterize")
+    if not gdal_rasterize:
+        raise FileNotFoundError("gdal_rasterize not on PATH")
+    WORK.mkdir(parents=True, exist_ok=True)
+    tif = WORK / "land_mask_001.tif"
+    if tif.exists():
+        tif.unlink()
+    south = lat1 - height * res
+    east = lon0 + width * res
+    print(
+        f"[band] rasterizing coastline {width}x{height} @{res}° …",
+        flush=True,
+    )
+    subprocess.run(
+        [
+            gdal_rasterize,
+            "-burn",
+            "1",
+            "-init",
+            "0",
+            "-ot",
+            "Byte",
+            "-tr",
+            str(res),
+            str(res),
+            "-te",
+            str(lon0),
+            str(south),
+            str(east),
+            str(lat1),
+            str(_LAND_CHART),
+            str(tif),
+        ],
+        check=True,
+    )
+    with rasterio.open(tif) as ds:
+        band = ds.read(1)
+    tif.unlink(missing_ok=True)
+    if band.shape != (height, width):
+        raise RuntimeError(f"land raster shape {band.shape} != {(height, width)}")
+    return (band > 0)
+
+
+def _ocean_from_seeds(water, labeled, lon0: float, lat1: float, res: float):
+    import numpy as np  # noqa: PLC0415
+
+    height, width = water.shape
+    ids: set[int] = set()
+
+    def _take(lon: float, lat: float) -> None:
+        c = int((lon - lon0) / res)
+        r = int((lat1 - lat) / res)
+        if 0 <= r < height and 0 <= c < width and water[r, c]:
+            ids.add(int(labeled[r, c]))
+
+    for lon, lat in _OCEAN_SEEDS:
+        _take(lon, lat)
+    for r in range(height):
+        if water[r, 0]:
+            ids.add(int(labeled[r, 0]))
+    ids.discard(0)
+    if not ids:
+        return np.zeros_like(water, dtype=bool)
+    return np.isin(labeled, np.fromiter(ids, dtype=np.int32))
+
+
+def _bridge_inlets(water, ocean, labeled, lat1: float, res: float, km: float):
+    """Join water bodies whose shore is within ``km`` of the open sea.
+
+    A coarse land pixel can seal the Solent or a gulf. Any cell of that
+    water body close to the sea pulls the whole inlet in, so the 20 km
+    band follows its coastline. A lake farther inland stays a lake.
+    """
+    import numpy as np  # noqa: PLC0415
+    from scipy.ndimage import distance_transform_edt  # noqa: PLC0415
+
+    height = water.shape[0]
+    lat_south = lat1 - height * res
+    dlat = res * _KM_PER_DEG_LAT
+    dlon = res * _KM_PER_DEG_LAT * max(0.2, math.cos(math.radians(lat_south)))
+    dist_km = distance_transform_edt(~ocean, sampling=(dlat, dlon))
+    near = water & ~ocean & (dist_km <= km)
+    if not np.any(near):
+        return ocean
+    ids = np.unique(labeled[near])
+    ids = ids[ids > 0]
+    if ids.size == 0:
+        return ocean
+    print(f"[band] bridged {ids.size} coastal inlet(s) within {km:.0f} km", flush=True)
+    return ocean | np.isin(labeled, ids)
+
+
+def _build_ocean_mask() -> dict:
+    import numpy as np  # noqa: PLC0415
+    from scipy.ndimage import label as cc_label  # noqa: PLC0415
+
+    height, width, lon0, lat1, res = _raster_shape()
+    land = np.asarray(_rasterize_land_chart(height, width, lon0, lat1, res), dtype=bool)
+    water = ~land
+    structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=int)
+    print("[band] labelling water bodies …", flush=True)
+    labeled, n_water = cc_label(water, structure=structure)
+    print(f"[band] water bodies={n_water}", flush=True)
+    ocean = _ocean_from_seeds(water, labeled, lon0, lat1, res)
+    ocean = _bridge_inlets(water, ocean, labeled, lat1, res, _MOUTH_BRIDGE_KM)
+
+    print(
+        f"[band] ocean cells={int(ocean.sum())} land cells={int(land.sum())}",
+        flush=True,
+    )
+    WORK.mkdir(parents=True, exist_ok=True)
+    idx = {
+        "land": land.astype(bool),
+        "ocean": ocean,
+        "lon0": lon0,
+        "lat1": lat1,
+        "res": res,
+        "keep": _build_keep(land.astype(bool), ocean, lat1, res),
+    }
+    _persist_ocean_index(idx)
+    print(f"[band] wrote {_OCEAN_MASK}", flush=True)
+    return idx
+
+
+def _ocean_index() -> dict | None:
+    global _ocean_cache
+    if _ocean_cache is not None:
+        return _ocean_cache
+    import numpy as np  # noqa: PLC0415
+
+    try:
+        if _OCEAN_MASK.exists():
+            data = np.load(_OCEAN_MASK)
+            _ocean_cache = {
+                "land": np.asarray(data["land"], dtype=bool),
+                "ocean": np.asarray(data["ocean"], dtype=bool),
+                "lon0": float(data["lon0"]),
+                "lat1": float(data["lat1"]),
+                "res": float(data["res"]),
+                "keep": (
+                    np.asarray(data["keep"], dtype=bool)
+                    if "keep" in data.files
+                    else None
+                ),
+            }
+            print("[band] loaded ocean mask", _OCEAN_MASK.name, flush=True)
+            return _ocean_cache
+        _ocean_cache = _build_ocean_mask()
+        return _ocean_cache
+    except Exception as exc:  # noqa: BLE001
+        print(f"[band] ocean mask failed ({exc}) — not skipping inland", flush=True)
+        return None
+
+
+def _persist_ocean_index(idx: dict) -> None:
+    import numpy as np  # noqa: PLC0415
+
+    WORK.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "land": np.asarray(idx["land"], dtype=np.uint8),
+        "ocean": np.asarray(idx["ocean"], dtype=np.uint8),
+        "lon0": np.float64(idx["lon0"]),
+        "lat1": np.float64(idx["lat1"]),
+        "res": np.float64(idx["res"]),
+    }
+    if idx.get("keep") is not None:
+        payload["keep"] = np.asarray(idx["keep"], dtype=np.uint8)
+    np.savez_compressed(_OCEAN_MASK, **payload)
+
+
+def _build_keep(
+    land: object,
+    ocean: object,
+    lat1: float,
+    res: float,
+    km: float = _COAST_PAD_KM,
+):
+    """Land within ``km`` of ocean, plus ocean within ``km`` of land."""
+    import numpy as np  # noqa: PLC0415
+    from scipy.ndimage import distance_transform_edt  # noqa: PLC0415
+
+    land_b = np.asarray(land, dtype=bool)
+    ocean_b = np.asarray(ocean, dtype=bool)
+    h, _w = land_b.shape
+    keep = np.zeros((h, land_b.shape[1]), dtype=bool)
+    dlat_km = res * _KM_PER_DEG_LAT
+    band_rows = max(1, int(round(5.0 / res)))
+    pad_rows = int(math.ceil(km / dlat_km)) + 4
+    print(f"[band] computing {km:.0f} km coastal keep strip …", flush=True)
+    for r0 in range(0, h, band_rows):
+        r1 = min(h, r0 + band_rows)
+        sl0 = max(0, r0 - pad_rows)
+        sl1 = min(h, r1 + pad_rows)
+        mid = 0.5 * (r0 + r1)
+        lat = lat1 - (mid + 0.5) * res
+        dlon_km = res * _KM_PER_DEG_LAT * max(0.2, math.cos(math.radians(lat)))
+        ocean_s = ocean_b[sl0:sl1]
+        land_s = land_b[sl0:sl1]
+        dist_o = distance_transform_edt(~ocean_s, sampling=(dlat_km, dlon_km))
+        dist_l = distance_transform_edt(~land_s, sampling=(dlat_km, dlon_km))
+        loc0 = r0 - sl0
+        loc1 = loc0 + (r1 - r0)
+        near_o = dist_o[loc0:loc1] <= km
+        near_l = dist_l[loc0:loc1] <= km
+        keep[r0:r1] = (land_b[r0:r1] & near_o) | (ocean_b[r0:r1] & near_l)
+    n = int(keep.sum())
+    print(f"[band] coastal keep cells={n} / {keep.size} ({100.0 * n / keep.size:.1f}%)", flush=True)
+    _write_keep_preview(keep, land_b, ocean_b)
+    return keep
+
+
+def _write_keep_preview(keep, land, ocean) -> None:
+    try:
+        from PIL import Image  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return
+    rgb = np.zeros((keep.shape[0], keep.shape[1], 3), dtype=np.uint8)
+    rgb[:] = (18, 18, 22)
+    rgb[np.asarray(ocean, dtype=bool)] = (24, 40, 70)
+    rgb[np.asarray(land, dtype=bool)] = (70, 70, 70)
+    rgb[np.asarray(keep, dtype=bool)] = (46, 196, 92)
+    dest = WORK / "coastal_strip_20km.png"
+    Image.fromarray(rgb, "RGB").save(dest)
+    print(f"[band] wrote strip preview {dest}", flush=True)
+
+
+def _ensure_keep(idx: dict):
+    keep = idx.get("keep")
+    if keep is not None:
+        return keep
+    keep = _build_keep(idx["land"], idx["ocean"], idx["lat1"], idx["res"])
+    idx["keep"] = keep
+    try:
+        _persist_ocean_index(idx)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[band] keep cache write failed ({exc})", flush=True)
+    return keep
+
+
+def _mask_window(idx: dict, bb: dict[str, float]):
+    import numpy as np  # noqa: PLC0415
+
+    lon0 = idx["lon0"]
+    lat1 = idx["lat1"]
+    res = idx["res"]
+    h, w = idx["land"].shape
+    c0 = max(0, int(np.floor((float(bb["lon_min"]) - lon0) / res)))
+    c1 = min(w, int(np.ceil((float(bb["lon_max"]) - lon0) / res)))
+    r0 = max(0, int(np.floor((lat1 - float(bb["lat_max"])) / res)))
+    r1 = min(h, int(np.ceil((lat1 - float(bb["lat_min"])) / res)))
+    if c1 <= c0 or r1 <= r0:
+        return None
+    return r0, r1, c0, c1
+
+
+def crop_keep_slices(keep, *, pad: int = 1):
+    """Row/col slices covering True cells, or None if empty."""
+    import numpy as np  # noqa: PLC0415
+
+    arr = np.asarray(keep, dtype=bool)
+    rows = np.any(arr, axis=1)
+    cols = np.any(arr, axis=0)
+    if not np.any(rows) or not np.any(cols):
+        return None
+    r_idx = np.flatnonzero(rows)
+    c_idx = np.flatnonzero(cols)
+    r0 = max(0, int(r_idx[0]) - pad)
+    r1 = min(arr.shape[0], int(r_idx[-1]) + 1 + pad)
+    c0 = max(0, int(c_idx[0]) - pad)
+    c1 = min(arr.shape[1], int(c_idx[-1]) + 1 + pad)
+    if r1 - r0 < 2 or c1 - c0 < 2:
+        return None
+    return slice(r0, r1), slice(c0, c1)
+
+
+def lonlat_in_coastal_keep(lon: float, lat: float) -> bool:
+    """True when the point is in the 20 km coastal strip.
+
+    If the ocean mask cannot be built, returns True so coast is not dropped.
+    """
+    idx = _ocean_index()
+    if idx is None:
+        return True
+    keep = _ensure_keep(idx)
+    lon0 = idx["lon0"]
+    lat1 = idx["lat1"]
+    res = idx["res"]
+    h, w = keep.shape
+    c = int(math.floor((float(lon) - lon0) / res))
+    r = int(math.floor((lat1 - float(lat)) / res))
+    if r < 0 or r >= h or c < 0 or c >= w:
+        return False
+    return bool(keep[r, c])
+
+
+def coastal_keep_on_lonlat(lons, lats):
+    """Boolean keep on an ascending lat/lon lattice, or None if mask missing."""
+    import numpy as np  # noqa: PLC0415
+
+    idx = _ocean_index()
+    if idx is None:
+        return None
+    keep = _ensure_keep(idx)
+    lon0 = idx["lon0"]
+    lat1 = idx["lat1"]
+    res = idx["res"]
+    h, w = keep.shape
+    cols = np.floor((np.asarray(lons, dtype=float) - lon0) / res).astype(int)
+    rows = np.floor((lat1 - np.asarray(lats, dtype=float)) / res).astype(int)
+    cols = np.clip(cols, 0, w - 1)
+    rows = np.clip(rows, 0, h - 1)
+    return keep[rows[:, None], cols[None, :]]
+
+
+def coastal_keep_on_grid(shape: tuple[int, int], transform, crs):
+    """Float32 0/1 keep resampled onto ``shape`` / ``transform`` / ``crs``."""
+    import numpy as np  # noqa: PLC0415
+    from rasterio.transform import from_origin  # noqa: PLC0415
+    from rasterio.warp import Resampling, reproject  # noqa: PLC0415
+
+    idx = _ocean_index()
+    if idx is None:
+        return np.ones(shape, dtype=np.float32)
+    keep = _ensure_keep(idx)
+    dest = np.zeros(shape, dtype=np.float32)
+    src_transform = from_origin(idx["lon0"], idx["lat1"], idx["res"], idx["res"])
+    reproject(
+        source=keep.astype(np.float32),
+        destination=dest,
+        src_transform=src_transform,
+        src_crs="EPSG:4326",
+        dst_transform=transform,
+        dst_crs=crs,
+        resampling=Resampling.nearest,
+    )
+    return (dest >= 0.5).astype(np.float32)
+
+
+def land_on_grid(shape: tuple[int, int], transform, crs):
+    """Float32 0/1 land from the coastline mask, or None if that mask is missing.
+
+    Hillshade must stay off the sea. The OSM land clip is optional; this raster
+    is the same chart coastline used for the 20 km strip.
+    """
+    import numpy as np  # noqa: PLC0415
+    from rasterio.transform import from_origin  # noqa: PLC0415
+    from rasterio.warp import Resampling, reproject  # noqa: PLC0415
+
+    idx = _ocean_index()
+    land = None if idx is None else idx.get("land")
+    if land is None:
+        return None
+    dest = np.zeros(shape, dtype=np.float32)
+    src_transform = from_origin(idx["lon0"], idx["lat1"], idx["res"], idx["res"])
+    reproject(
+        source=np.asarray(land, dtype=np.float32),
+        destination=dest,
+        src_transform=src_transform,
+        src_crs="EPSG:4326",
+        dst_transform=transform,
+        dst_crs=crs,
+        resampling=Resampling.nearest,
+    )
+    return (dest >= 0.5).astype(np.float32)
+
+
+def bbox_near_coast(
+    bb: dict[str, float],
+    *,
+    pad_km: float = _COAST_PAD_KM,
+    pad_deg: float | None = None,
+) -> bool:
+    """True when the bbox overlaps the 20 km sea-coast strip.
+
+    Lakes do not count as ocean. Used to skip inland DEM / WindNinja work.
+    If the mask cannot be built, returns True so coast is not dropped.
+    """
+    del pad_km, pad_deg
+    idx = _ocean_index()
+    if idx is None:
+        return True
+    keep = _ensure_keep(idx)
+    win = _mask_window(idx, bb)
+    if win is None:
+        return False
+    r0, r1, c0, c1 = win
+    return bool(keep[r0:r1, c0:c1].any())
 
 
 def main() -> int:

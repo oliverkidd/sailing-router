@@ -6,6 +6,7 @@ import { describeZoomDebug } from "@/lib/zoomDebugInfo";
 /** Temporary HUD — remove with zoomDebugInfo.ts when done fact-checking. */
 export default function ZoomDebugChip({
   zoom,
+  forecastZoom,
   terrainOn = true,
   onTerrainToggle,
   terrainDisabled = false,
@@ -14,6 +15,8 @@ export default function ZoomDebugChip({
   terrainLibraryVersion,
 }: {
   zoom: number;
+  /** Synthetic /wind/area zoom (High def locks density off the camera). */
+  forecastZoom?: number;
   terrainOn?: boolean;
   onTerrainToggle?: (on: boolean) => void;
   /** When true (e.g. routing active), toggle is shown but disabled. */
@@ -23,7 +26,10 @@ export default function ZoomDebugChip({
   terrainApplied?: boolean | null;
   terrainLibraryVersion?: string | null;
 }) {
-  const { header, rows } = useMemo(() => describeZoomDebug(zoom), [zoom]);
+  const { header, rows } = useMemo(
+    () => describeZoomDebug(zoom, forecastZoom, terrainOn),
+    [zoom, forecastZoom, terrainOn],
+  );
 
   const lib = (terrainLibrary ?? "").toLowerCase() || null;
   const available = lib === "windninja" || lib === "identity";
@@ -38,7 +44,7 @@ export default function ZoomDebugChip({
           : `WindNinja: off (${terrainLibraryVersion || lib})`;
 
   return (
-    <div className="zoom-debug-chip" aria-hidden>
+    <div className="zoom-debug-chip">
       <div className="zoom-debug-chip-header">{header}</div>
       {rows.map((row) => (
         <div key={row.label} className="zoom-debug-chip-row">
@@ -52,22 +58,20 @@ export default function ZoomDebugChip({
       </div>
       {onTerrainToggle && (
         <label
-          className={`zoom-debug-chip-toggle${terrainDisabled || !available ? " disabled" : ""}`}
+          className={`zoom-debug-chip-toggle${terrainDisabled ? " disabled" : ""}`}
           title={
             terrainDisabled
-              ? "WindNinja opt stays on during routing"
-              : !available
-                ? "No terrain library baked — run build-data --cyclades"
-                : "Toggle terrain downscaling on the browse forecast"
+              ? "High def stays on during routing"
+              : "High def: WindNinja + ~200 m grid at fetch time. Off: ~500 m, no WindNinja. Zooming in interpolates — it does not fetch more detail."
           }
         >
           <input
             type="checkbox"
             checked={terrainOn}
-            disabled={terrainDisabled || !available}
+            disabled={terrainDisabled}
             onChange={(e) => onTerrainToggle(e.target.checked)}
           />
-          <span>WindNinja opt</span>
+          <span>High def</span>
         </label>
       )}
     </div>

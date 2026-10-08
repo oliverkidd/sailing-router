@@ -4,13 +4,14 @@
 Uses the public AWS Open Data COGs (no API key):
   https://copernicus-dem-30m.s3.amazonaws.com/
 
-Idempotent: skips when data/dem already has a GeoTIFF > 0.1 MB.
+Idempotent: skips when the target mosaic/VRT already exists (unless --force).
 
 Usage:
-  python scripts/fetch_dem.py              # full REGION_BBOX
+  python scripts/fetch_dem.py              # full REGION_BBOX → 1° tiles + region_dem.vrt
   python scripts/fetch_dem.py --sample     # Solent SAMPLE_BBOX
-  python scripts/fetch_dem.py --cyclades   # Kea/Kythnos/Syros test area
+  python scripts/fetch_dem.py --cyclades   # Aegean 2×2° clip
   python scripts/fetch_dem.py --bbox lon_min,lat_min,lon_max,lat_max
+  python scripts/fetch_dem.py --force      # re-download / rebuild VRT
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import math
 import sys
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 _SCRIPTS = Path(__file__).resolve().parent
@@ -53,12 +55,30 @@ def _tiles_for_bbox(bb: dict[str, float]) -> list[tuple[int, int]]:
     return out
 
 
+def _mosaic_name() -> str:
+    if parse_bbox_arg() is not None:
+        return "region_dem_custom.tif"
+    if use_cyclades():
+        return "region_dem_cyclades.tif"
+    if use_sample():
+        return "region_dem_sample.tif"
+    return "region_dem.tif"
+
+
 def _dem_present() -> Path | None:
-    if not DEM_DIR.exists():
-        return None
-    for f in sorted(DEM_DIR.glob("*.tif")) + sorted(DEM_DIR.glob("*.tiff")):
-        if f.stat().st_size > 100_000:
-            return f
+    """Skip only when this request's mosaic/VRT is already built.
+
+    A Cyclades or Solent clip must not block a full-region fetch.
+    """
+    mosaic = DEM_DIR / _mosaic_name()
+    vrt = mosaic.with_suffix(".vrt")
+    if vrt.exists() and vrt.stat().st_size > 100:
+        return vrt
+    if mosaic.exists() and mosaic.stat().st_size > 100_000:
+        return mosaic
+    stamp = DEM_DIR / ".region_complete"
+    if mosaic.name == "region_dem.tif" and stamp.exists():
+        return stamp
     return None
 
 
@@ -83,10 +103,8 @@ def _download(url: str, dest: Path) -> bool:
         raise
 
 
-def _mosaic_vrt(tiles: list[Path], out_tif: Path) -> None:
-    """Build a single GeoTIFF via gdalbuildvrt + gdal_translate when available."""
+def _gdal_bins() -> tuple[str | None, str | None]:
     import shutil
-    import subprocess
 
     gdalbuildvrt = shutil.which("gdalbuildvrt")
     gdal_translate = shutil.which("gdal_translate")
@@ -99,15 +117,31 @@ def _mosaic_vrt(tiles: list[Path], out_tif: Path) -> None:
                 gdalbuildvrt = str(Path(base) / "gdalbuildvrt")
                 gdal_translate = str(Path(base) / "gdal_translate")
                 break
-    if not gdalbuildvrt or not gdal_translate:
+    return gdalbuildvrt, gdal_translate
+
+
+def _mosaic_vrt(tiles: list[Path], out_tif: Path, *, translate: bool) -> None:
+    """Build a VRT of 1° COGs. Translate to GeoTIFF only for small clips."""
+    import subprocess
+
+    gdalbuildvrt, gdal_translate = _gdal_bins()
+    if not gdalbuildvrt:
         print("[fetch-dem] gdalbuildvrt not found — leaving individual tiles")
         return
 
     vrt = out_tif.with_suffix(".vrt")
+    listfile = out_tif.with_suffix(".vrt.txt")
+    listfile.write_text("\n".join(str(t) for t in tiles) + "\n", encoding="utf-8")
     subprocess.run(
-        [gdalbuildvrt, str(vrt), *[str(t) for t in tiles]],
+        [gdalbuildvrt, "-overwrite", "-input_file_list", str(listfile), str(vrt)],
         check=True,
     )
+    print(f"[fetch-dem] VRT → {vrt} ({len(tiles)} tiles)")
+    if not translate:
+        return
+    if not gdal_translate:
+        print("[fetch-dem] gdal_translate not found — leaving VRT")
+        return
     subprocess.run(
         [
             gdal_translate,
@@ -120,60 +154,72 @@ def _mosaic_vrt(tiles: list[Path], out_tif: Path) -> None:
         ],
         check=True,
     )
-    vrt.unlink(missing_ok=True)
     print(f"[fetch-dem] mosaicked → {out_tif} ({out_tif.stat().st_size / 1e6:.1f} MB)")
-
-
-def _mosaic_name() -> str:
-    if parse_bbox_arg() is not None:
-        return "region_dem_custom.tif"
-    if use_cyclades():
-        return "region_dem_cyclades.tif"
-    if use_sample():
-        return "region_dem_sample.tif"
-    return "region_dem.tif"
 
 
 def main() -> int:
     bb = chart_bbox()
     existing = _dem_present()
     if existing and "--force" not in sys.argv:
-        print(
-            f"[fetch-dem] already present: {existing} "
-            f"({existing.stat().st_size / 1e6:.1f} MB)"
-        )
+        size = existing.stat().st_size / 1e6 if existing.stat().st_size else 0
+        print(f"[fetch-dem] already present: {existing} ({size:.1f} MB)")
         return 0
 
-    tiles = _tiles_for_bbox(bb)
-    print(f"[fetch-dem] fetching {len(tiles)} GLO-30 tile(s) for {bb}")
+    wanted = _tiles_for_bbox(bb)
+    print(f"[fetch-dem] fetching {len(wanted)} GLO-30 tile(s) for {bb}")
     DEM_DIR.mkdir(parents=True, exist_ok=True)
+
+    jobs: list[tuple[str, Path]] = []
     downloaded: list[Path] = []
-    for lat, lon in tiles:
+    for lat, lon in wanted:
         name = _tile_name(lat, lon)
-        url = f"{BASE}/{name}/{name}.tif"
         dest = DEM_DIR / f"{name}.tif"
         if dest.exists() and dest.stat().st_size > 100_000:
             print(f"  ✓ cached {dest.name}")
             downloaded.append(dest)
             continue
-        if _download(url, dest):
-            downloaded.append(dest)
+        jobs.append((f"{BASE}/{name}/{name}.tif", dest))
+
+    failed = 0
+    if jobs:
+        workers = min(8, len(jobs))
+        print(f"[fetch-dem] downloading {len(jobs)} missing tile(s) ({workers} workers)")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {pool.submit(_download, url, dest): dest for url, dest in jobs}
+            for fut in as_completed(futs):
+                dest = futs[fut]
+                try:
+                    if fut.result():
+                        downloaded.append(dest)
+                except Exception as exc:
+                    failed += 1
+                    print(f"  ! {dest.name}: {exc}", file=sys.stderr)
 
     if not downloaded:
         print("[fetch-dem] ERROR: no DEM tiles downloaded", file=sys.stderr)
         return 1
 
     mosaic = DEM_DIR / _mosaic_name()
-    if len(downloaded) == 1:
+    full_region = mosaic.name == "region_dem.tif"
+    if len(downloaded) == 1 and not full_region:
         if mosaic.exists() or mosaic.is_symlink():
             mosaic.unlink()
         mosaic.symlink_to(downloaded[0].name)
         print(f"[fetch-dem] linked {mosaic.name} → {downloaded[0].name}")
     else:
-        _mosaic_vrt(downloaded, mosaic)
+        _mosaic_vrt(downloaded, mosaic, translate=not full_region)
+        if full_region and failed == 0:
+            (DEM_DIR / ".region_complete").write_text(
+                f"{len(downloaded)} tiles\n", encoding="utf-8"
+            )
+        elif full_region and failed:
+            print(
+                f"[fetch-dem] {failed} download error(s) — not stamping complete; re-run to resume",
+                file=sys.stderr,
+            )
 
     print(f"[fetch-dem] done — {len(downloaded)} tile(s) in {DEM_DIR}")
-    return 0
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":

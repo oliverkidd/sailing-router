@@ -4,6 +4,7 @@ import { FALLBACK_COLORS } from "./colors";
 import type {
   BoatConfig,
   Course,
+  LatLon,
   RouteLeg,
   RouteRequest,
   TuningField,
@@ -25,6 +26,8 @@ export interface LabCourseResult {
   unreachable: boolean;
   warnings: string[];
   legs: RouteLeg[];
+  /** Advisory headland chain the router steered by, when guidance was on. */
+  waypoints?: LatLon[];
   error?: string;
 }
 

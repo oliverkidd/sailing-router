@@ -13,6 +13,7 @@ penalties; small course changes use fractions of tack_penalty_s scaled by TWS.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from typing import Any
 
 from .boat import Boat
 from .geo import GeoContext, bearing, destination, distance_nm
+from .geo.waypoints import WaypointChain, find_waypoints
 from .metocean import WindField
 from .navmath import magnitude_bearing, norm360, signed_diff, twa_from, vector
 from .schemas import Course, Mark, ModelRoute, RouteLeg
@@ -28,6 +30,11 @@ from .schemas import Course, Mark, ModelRoute, RouteLeg
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+
+# Guide advance is a function of position and index only, so it caches by cell.
+# ~0.24 nm — fine enough that the answer is stable across the cell, coarse
+# enough to collapse a few thousand frontier nodes onto a few hundred keys.
+GUIDE_CACHE_CELL_DEG = 0.004
 
 
 @dataclass(slots=True)
@@ -48,6 +55,7 @@ class Node:
     depth_m: float = 0.0
     hazard_cost: float = 0.0  # always 0; kept for RouteLeg schema compat
     rethink: bool = False  # next expand re-seeds from mark bearing
+    guide_idx: int = 0  # index into the leg's waypoint chain; never goes back
 
     @property
     def pos(self) -> tuple[float, float]:
@@ -95,6 +103,14 @@ class RouterParams:
     opposite_tack_twa_slack_deg: float = 5.0
     opposite_gybe_twa_slack_deg: float = 5.0
     opposite_maneuver_heading_spread_deg: float = 45.0
+    # Min distance between tacks/gybes unless the held board is into shore.
+    # 1 nm was short enough for Solent forecast beats to flip every board.
+    tack_lockout_nm: float = 2.0
+    tack_shore_probe_nm: float = 0.8
+    # Discard headings that increase chain-rem (sailing away from the aim)
+    # when the mark is not blocked — stops the eastbound spike on a west beat.
+    progress_probe_nm: float = 0.8
+    progress_rem_slack_nm: float = 0.2
     # Rethink / layline
     rethink_heading_vs_bearing_deg: float = 10.0
     layline_stop_deg: float = 35.0
@@ -113,6 +129,14 @@ class RouterParams:
     # Arrival
     finish_snap_radius_nm: float = 0.2
     mark_arrival_break_nm: float = 0.05
+    # Headland chain. Remaining distance follows the chain, so a boat can sail
+    # away from a mark to get around land without the prune calling that a stall.
+    waypoint_guidance: int = 1
+    waypoint_clearance_nm: float = 0.2
+    waypoint_corridor_margin_nm: float = 5.0
+    waypoint_max_points: int = 8
+    waypoint_grid_stride: int = 1
+    waypoint_pass_nm: float = 0.3
 
 
 def _wind_side(heading: float, twd: float) -> float:
@@ -157,14 +181,13 @@ def _remaining_nm(node: Node, target: tuple[float, float]) -> float:
 
 def _prune_score(
     node: Node,
-    target: tuple[float, float],
+    rem: float,
     maneuver_nm: float,
     max_maneuvers: int,
     overflow_nm: float,
     p: RouterParams,
 ) -> float:
     """Lower is better: ETA proxy (time + rem/bsp) + soft maneuver costs."""
-    rem = _remaining_nm(node, target)
     bsp = max(node.bsp, p.prune_floor_bsp_kn)
     eta_s = node.t.timestamp() + (rem / bsp) * 3600.0
     overflow = max(0, node.n_maneuvers - max_maneuvers)
@@ -257,6 +280,12 @@ class IsochroneRouter:
         self._leg_warnings: list[str] = []
         self._unreachable = False
         self._pause: _PauseState | None = None
+        # Leg-scoped waypoint guidance, rebuilt by _begin_guidance.
+        self._chain: WaypointChain | None = None
+        self._guide_pts: list[tuple[float, float]] = []
+        self._guide_suffix_nm: list[float] = []
+        self._guide_cache: dict[tuple[int, int, int], int] = {}
+        self._route_waypoints: list[tuple[float, float]] = []
 
     @property
     def can_resume(self) -> bool:
@@ -265,6 +294,180 @@ class IsochroneRouter:
     def _emit(self, event: dict[str, Any]) -> None:
         if self.on_progress is not None:
             self.on_progress(event)
+
+    def _begin_guidance(
+        self, origin: tuple[float, float], tgt: tuple[float, float]
+    ) -> None:
+        """Find this leg's headland chain, once, before the frontier expands."""
+        self._chain = None
+        self._guide_pts = [tgt]
+        self._guide_suffix_nm = [0.0]
+        self._guide_cache = {}
+        if not self.p.waypoint_guidance:
+            return
+        chain = find_waypoints(
+            self.geo,
+            origin,
+            tgt,
+            clearance_nm=self.p.waypoint_clearance_nm,
+            corridor_margin_nm=self.p.waypoint_corridor_margin_nm,
+            max_points=max(1, int(self.p.waypoint_max_points)),
+            grid_stride=max(1, int(self.p.waypoint_grid_stride)),
+        )
+        if not chain:
+            return
+        self._chain = chain
+        self._guide_pts = [*chain.points, tgt]
+        # suffix[k] = distance from guide k to the mark along the rest of the chain.
+        suffix = [0.0] * len(self._guide_pts)
+        for k in range(len(self._guide_pts) - 2, -1, -1):
+            suffix[k] = suffix[k + 1] + distance_nm(
+                self._guide_pts[k], self._guide_pts[k + 1]
+            )
+        self._guide_suffix_nm = suffix
+        self._route_waypoints.extend(chain.points)
+        logger.info(
+            "waypoint guidance: %d points, %.2f nm along vs %.2f nm direct",
+            len(chain.points),
+            suffix[0] + distance_nm(origin, self._guide_pts[0]),
+            distance_nm(origin, tgt),
+        )
+
+    def _advance_guide(self, pos: tuple[float, float], idx: int) -> int:
+        """Index of the first chain point neither in sight nor already rounded.
+
+        Line of sight is the primary rule (Theta*-style shortcut): it lets a boat
+        passing 2 nm outside a headland skip that waypoint instead of being
+        dragged back in to it, and once the mark itself comes into sight the
+        index reaches the end and the chain stops having any effect.
+
+        Proximity is the necessary backstop. The chain is found on a strided
+        mask, so around something as thin as the Needles two consecutive points
+        can be navigable while the chord between them is not — and with sight
+        alone the boat would sit on the waypoint it has already rounded forever,
+        because remaining distance cannot fall below that point's chain suffix.
+        """
+        chain = self._chain
+        last = len(self._guide_pts) - 1
+        if chain is None or idx >= last:
+            return last
+        key = (
+            int(pos[0] / GUIDE_CACHE_CELL_DEG),
+            int(pos[1] / GUIDE_CACHE_CELL_DEG),
+            idx,
+        )
+        hit = self._guide_cache.get(key)
+        if hit is not None:
+            return hit
+        out = idx
+        pass_nm = self.p.waypoint_pass_nm
+        while out < last and (
+            self._chain_visible(pos, self._guide_pts[out + 1])
+            or distance_nm(pos, self._guide_pts[out]) <= pass_nm
+        ):
+            out += 1
+        self._guide_cache[key] = out
+        return out
+
+    def _chain_visible(self, pos: tuple[float, float], point: tuple[float, float]) -> bool:
+        """True when the sailed chart, not the coarse corridor mask, can see ``point``.
+
+        The mask misses thin water and invents blocked cells, so a boat steered by
+        it aims at a waypoint it could already see past. That is the kink in open
+        water. Off the corridor the chain no longer applies and the mark is the aim.
+        """
+        chain = self._chain
+        if chain is None:
+            return True
+        grid = chain.grid
+        if grid is not None and (not grid.contains(pos) or not grid.contains(point)):
+            return True
+        return not (
+            self.geo.blocked_point(point) or self.geo.blocked_segment(pos, point)
+        )
+
+    def _guide(self, node: Node) -> tuple[float, float]:
+        """Active guidance point for a node, memoised onto it.
+
+        When the water just past this corner is already open, aim there instead
+        of at the corner itself. Sailing to the vertex and then snapping onto
+        the next leg is the kink on the chart.
+        """
+        last = len(self._guide_pts) - 1
+        mark = self._guide_pts[last]
+        # Inside 2 nm of the race mark the chain is done — false depth holes
+        # around a rock must not keep the boat aimed at a prior waypoint.
+        if distance_nm(node.pos, mark) < 2.0:
+            node.guide_idx = last
+            return mark
+        node.guide_idx = self._advance_guide(node.pos, node.guide_idx)
+        # Wrong side of a headland: children inherit a guide_idx rounded while
+        # the parent was north of the spit, then drift south. Aiming at the
+        # next bend drives rem through land and the frontier thrashes. Walk
+        # back while the active guide is blocked and the prior bend is still
+        # reachable — but not while we are still inside the pass radius of
+        # that bend (Needles proximity advance must stick there).
+        while node.guide_idx > 0:
+            pt = self._guide_pts[node.guide_idx]
+            if not (
+                self.geo.blocked_point(pt)
+                or self.geo.blocked_segment(node.pos, pt)
+            ):
+                break
+            prev = self._guide_pts[node.guide_idx - 1]
+            if self.geo.blocked_point(prev) or self.geo.blocked_segment(
+                node.pos, prev
+            ):
+                break
+            if distance_nm(node.pos, prev) <= self.p.waypoint_pass_nm:
+                break
+            node.guide_idx -= 1
+        pt = self._guide_pts[node.guide_idx]
+        if node.guide_idx >= last:
+            return pt
+        nxt = self._guide_pts[node.guide_idx + 1]
+        brg = bearing(pt, nxt)
+        for dist in (1.2, 0.6, 0.3):
+            ahead = destination(pt, brg, dist)
+            if self._chain_visible(node.pos, ahead):
+                return ahead
+        return pt
+
+    def _rem(self, node: Node, tgt: tuple[float, float]) -> float:
+        """Remaining distance to the mark, around the chain when one is active.
+
+        Straight-line distance is the whole bay-pinging bug: with land between
+        node and mark, sailing *around* the obstruction increases it, so the
+        prune drops the nodes making real progress and the stall counter fires.
+        """
+        if self._chain is None:
+            return _remaining_nm(node, tgt)
+        guide = self._guide(node)
+        return distance_nm(node.pos, guide) + self._guide_suffix_nm[node.guide_idx]
+
+    def _ban_aim_bearing(
+        self, node: Node, target: tuple[float, float]
+    ) -> float:
+        """Bearing used by hard anti-spike bans.
+
+        Prefer the guide when it agrees with the mark. When the boat has
+        overshot onto the wrong side of a headland waypoint, the guide can
+        point reverse of the race mark — banning against that guide then
+        rejects the only headings that make progress (Solent westbound died).
+
+        Conversely, when the mark line is through land and the guide is the
+        coastal bend (east of IoW on M2→M3), banning against the mark aims
+        into the island and strips the only open headings.
+        """
+        guide = self._guide(node) if self._guide_pts else target
+        brg_m = bearing(node.pos, target)
+        brg_g = bearing(node.pos, guide)
+        if abs(signed_diff(brg_g, brg_m)) > 60.0:
+            mark_blocked = self.geo.blocked_segment(node.pos, target)
+            if mark_blocked:
+                return brg_g
+            return brg_m
+        return brg_g
 
     def _probe_clear(
         self,
@@ -287,9 +490,45 @@ class IsochroneRouter:
                     heading + self.boat.leeway_offset(tws, bsp, twd, heading)
                 )
         probe = destination(pos, course, probe_nm)
-        return not (
-            self.geo.blocked_point(probe) or self.geo.blocked_segment(pos, probe)
-        )
+        # Stranded on a blocked cell (depth pocket): blocked_segment samples the
+        # start point, so every heading looks blocked and the frontier dies
+        # (Bembridge shelf on M2→M3 @315). Only the path ahead matters then.
+        return not self._segment_blocked_ahead(pos, probe)
+
+    def _heading_fetches(
+        self,
+        pos: tuple[float, float],
+        heading: float,
+        mark: tuple[float, float],
+        radius_nm: float,
+    ) -> bool:
+        """True if holding this heading enters the mark circle on clear water.
+
+        In steady wind the other board is worth taking only once it does.
+        Tacking earlier, then tacking back, is the extra-tack loss. A geometric
+        fetch through a shoal is not a layline — that was the Needles scribble.
+        """
+        if radius_nm <= 0:
+            radius_nm = self.p.mark_arrival_break_nm
+        if distance_nm(pos, mark) <= radius_nm:
+            return True
+        north = (mark[0] - pos[0]) * 60.0
+        east = (mark[1] - pos[1]) * 60.0 * max(0.2, math.cos(math.radians(pos[0])))
+        rad = math.radians(heading)
+        ux, uy = math.sin(rad), math.cos(rad)
+        along = east * ux + north * uy
+        miss2 = east * east + north * north - along * along
+        if miss2 > radius_nm * radius_nm:
+            return False
+        enter = along - math.sqrt(max(0.0, radius_nm * radius_nm - miss2))
+        if enter < -1e-3:
+            return False
+        # Sailability: the chord to the circle must be water, not a shoal cut.
+        if enter > 0.05 and self.geo.blocked_segment(
+            pos, destination(pos, heading, enter)
+        ):
+            return False
+        return True
 
     def _mark_bearing_clear(
         self,
@@ -319,54 +558,80 @@ class IsochroneRouter:
         up_twa: float,
         dn_twa: float,
         *,
-        always_extra: set[float] | None = None,
+        always_extra: list[float] | set[float] | None = None,
+        look_nm: float | None = None,
+        prefer_brg: float | None = None,
     ) -> list[float]:
         """Widen ±heading_step from mark seed until a clear sailable heading exists.
 
-        Stops at the first clear ring. Hard cap is ±180° from seed — enough to
-        circumnavigate land between boat and mark without a separate fan mode.
+        Stops at the first clear ring. ``look_nm`` sees an island that a short
+        probe would sail into. A clear heading that turns *away* from
+        ``prefer_brg`` is skipped until nothing toward the mark is clear, so a
+        beat does not peel off into open water on the wrong side of the channel.
+        Hard cap is ±180° from seed.
         """
         step = self.p.heading_step_deg
-        probe_nm = min(
+        short = min(
             self.p.fan_probe_nm_max,
             max(self.p.mark_probe_nm * self.p.fan_probe_mark_frac, self.p.fan_probe_nm_min),
         )
+        probe_nm = short if look_nm is None else max(short, min(look_nm, 8.0))
 
         found: list[float] = []
         seen: set[float] = set()
 
-        def consider(h: float) -> bool:
+        def consider(h: float, *, allow_away: bool) -> bool:
             key = round(norm360(h), 3)
             if key in seen:
                 return False
             twa = twa_from(h, twd)
-            if not (up_twa <= twa <= dn_twa):
+            # By the lee, same gybe, only when the VMG heading itself is blocked.
+            # The fan reaches this a step or two off the seed, before it walks
+            # across to the other gybe. Open water never gets here: a clear seed
+            # returns on the first test.
+            by_the_lee = (
+                dn_twa < twa <= min(175.0, dn_twa + 25.0)
+                and signed_diff(h, twd) * signed_diff(seed, twd) > 0
+            )
+            if not (up_twa <= twa <= dn_twa or by_the_lee):
                 return False
+            if prefer_brg is not None:
+                # Even allow_away must not sail more than 90° off the mark —
+                # that is the reverse-gybe spike into open water.
+                away_limit = 90.0 if allow_away else (
+                    abs(signed_diff(seed, prefer_brg)) + 20.0
+                )
+                if abs(signed_diff(h, prefer_brg)) > away_limit:
+                    return False
             if not self._probe_clear(pos, h, probe_nm=probe_nm, tws=tws, twd=twd):
                 return False
             seen.add(key)
             found.append(norm360(h))
             return True
 
-        if always_extra:
-            for h in always_extra:
-                consider(h)
-
-        if consider(seed):
-            return list(dict.fromkeys(found))
-
-        half = step
-        while half <= self.p.fan_half_max_deg + 1e-6:
-            hit = consider(norm360(seed + half))
-            hit = consider(norm360(seed - half)) or hit
-            if hit:
-                break
-            half += step
-
-        if not found:
-            found = [seed]
+        def sweep(allow_away: bool) -> bool:
             if always_extra:
-                found.extend(always_extra)
+                for h in always_extra:
+                    consider(h, allow_away=allow_away)
+            if consider(seed, allow_away=allow_away):
+                return True
+            half = step
+            hit = False
+            while half <= self.p.fan_half_max_deg + 1e-6:
+                hit = consider(norm360(seed + half), allow_away=allow_away) or hit
+                hit = consider(norm360(seed - half), allow_away=allow_away) or hit
+                if hit:
+                    return True
+                half += step
+            return False
+
+        if not sweep(False):
+            seen.clear()
+            found.clear()
+            if not sweep(True):
+                found = [seed]
+                if always_extra:
+                    found.extend(always_extra)
         return list(dict.fromkeys(found))
 
     def _seed_heading(
@@ -374,13 +639,16 @@ class IsochroneRouter:
         node: Node,
         tws: float,
         twd: float,
+        guide: tuple[float, float],
         target: tuple[float, float],
+        radius_nm: float = 0.2,
     ) -> tuple[float, str, float]:
         """Return (seed_heading, mode, twa_brg).
 
-        mode is ``up_vmg`` / ``dn_vmg`` / ``bearing``.
+        Upwind and downwind, hold the long board until the other VMG heading
+        enters the mark circle, then take it. That is one tack or one gybe.
         """
-        brg = bearing(node.pos, target)
+        brg = bearing(node.pos, guide)
         up_twa = self.boat.target_upwind_twa(tws)
         dn_twa = self.boat.target_downwind_twa(tws)
         port_up = norm360(twd + up_twa)
@@ -389,41 +657,151 @@ class IsochroneRouter:
         stbd_dn = norm360(twd - dn_twa)
         twa_brg = twa_from(brg, twd)
 
-        def _hysteresis(closer: float, port: float, stbd: float) -> float:
-            """Stay on current side's VMG unless opposite is clearly closer to mark."""
-            if node.heading is None or node.rethink:
-                return closer
-            same = (
-                port
-                if abs(signed_diff(port, node.heading))
-                <= abs(signed_diff(stbd, node.heading))
-                else stbd
+        def board(port: float, stbd: float) -> float:
+            return self._vmg_board(
+                node, port, stbd, brg, guide, target, radius_nm, tws, twd
             )
-            rem_h = distance_nm(node.pos, target)
-            # Near mark: never flip seed — finish the approach tack/gybe.
-            if rem_h < self.p.near_mark_nm:
-                return same
-            if abs(signed_diff(closer, brg)) + self.p.vmg_hysteresis_deg < abs(
-                signed_diff(same, brg)
-            ):
-                return closer
-            return same
 
         if twa_brg < up_twa:
-            closer = (
-                port_up
-                if abs(signed_diff(port_up, brg)) <= abs(signed_diff(stbd_up, brg))
-                else stbd_up
-            )
-            return _hysteresis(closer, port_up, stbd_up), "up_vmg", twa_brg
+            return board(port_up, stbd_up), "up_vmg", twa_brg
         if twa_brg > dn_twa:
-            closer = (
-                port_dn
-                if abs(signed_diff(port_dn, brg)) <= abs(signed_diff(stbd_dn, brg))
-                else stbd_dn
-            )
-            return _hysteresis(closer, port_dn, stbd_dn), "dn_vmg", twa_brg
+            return board(port_dn, stbd_dn), "dn_vmg", twa_brg
         return brg, "bearing", twa_brg
+
+    def _vmg_board(
+        self,
+        node: Node,
+        port: float,
+        stbd: float,
+        brg: float,
+        guide: tuple[float, float],
+        lay_at: tuple[float, float],
+        radius_nm: float,
+        tws: float,
+        twd: float,
+    ) -> float:
+        """Layline board if one fetches the race mark; otherwise stay on the board already sailed.
+
+        ``guide`` is only the bearing used when neither board lays the mark. A
+        headland point a few cables ahead is fetched by both gybes, and treating
+        that as the layline flips the boat at every waypoint.
+        """
+
+        def clear(heading: float) -> bool:
+            rem = distance_nm(node.pos, guide)
+            return self._probe_clear(
+                node.pos,
+                heading,
+                probe_nm=min(self.p.mark_probe_nm, max(rem, 0.05)),
+                tws=tws,
+                twd=twd,
+            )
+
+        port_lays = self._heading_fetches(node.pos, port, lay_at, radius_nm) and clear(port)
+        stbd_lays = self._heading_fetches(node.pos, stbd, lay_at, radius_nm) and clear(stbd)
+        same = None
+        if node.heading is not None:
+            same = (
+                port
+                if abs(signed_diff(port, node.heading)) <= abs(signed_diff(stbd, node.heading))
+                else stbd
+            )
+        # Both boards fetch a circle you're already inside. Flipping here is a
+        # tack of a few metres.
+        if same is not None and distance_nm(node.pos, lay_at) < 0.45 and clear(same):
+            return same
+        if port_lays or stbd_lays:
+            if port_lays and stbd_lays and same is not None:
+                return same
+            return port if port_lays else stbd
+        closer = (
+            port
+            if abs(signed_diff(port, brg)) <= abs(signed_diff(stbd, brg))
+            else stbd
+        )
+        other = stbd if closer == port else port
+
+        def open_board(heading: float) -> bool:
+            """True when the board stays clear for a working boat-length.
+
+            Short ``clear()`` alone accepts a pocket into the island (M2→M3 on
+            the IoW south coast: closer board clear at 0.8 nm, land at 1 nm).
+            """
+            return self._probe_clear(
+                node.pos,
+                heading,
+                probe_nm=min(1.5, max(1.0, distance_nm(node.pos, guide) * 0.15)),
+                tws=tws,
+                twd=twd,
+            )
+
+        # Only the first board of a leg looks ahead. A persistent shift breaks a
+        # tie, or overrides it, toward the side that shift will lift. Mid-leg
+        # we stay put until the new layline appears.
+        if same is None:
+            prefer = self._shift_board(node, port, stbd, brg, twd)
+            if prefer is not None and clear(prefer) and open_board(prefer):
+                return prefer
+            if open_board(closer):
+                return closer
+            if open_board(other):
+                return other
+            return closer
+        # Held board into a pocket: flip to the open opposite board rather than
+        # sailing into the shore under lockout (oscillating / shifted wind).
+        if not open_board(same) and open_board(other):
+            return other
+        # Held board >50° off the aim while the other board is open — stay-put
+        # locked a westbound tack away from M3 east of IoW (wind 315).
+        if (
+            open_board(other)
+            and abs(signed_diff(same, brg)) > 50.0
+            and abs(signed_diff(other, brg)) + 10.0 < abs(signed_diff(same, brg))
+        ):
+            return other
+        # A waypoint bearing closer to the other gybe is not a layline. Stay on
+        # this board; if the VMG heading is into land the fan eases off on the
+        # same side before it will gybe.
+        return same
+
+    def _shift_board(
+        self,
+        node: Node,
+        port: float,
+        stbd: float,
+        brg: float,
+        twd: float,
+    ) -> float | None:
+        """First-board choice when a shift is present at two future times and same sign.
+
+        The favored side is the opposite of the future board closer to the mark:
+        that is the side you must already be on for the new layline to be short.
+        """
+        samples: list[tuple[float, float]] = []
+        for ahead in (900, 1800, 2700, 3600):
+            w = self.wind.wind_at(node.lat, node.lon, node.t + timedelta(seconds=ahead))
+            if w is None:
+                break
+            samples.append((w[0], signed_diff(w[1], twd)))
+        future_tws = None
+        future_delta = 0.0
+        for i in range(len(samples) - 1):
+            d1, d2 = samples[i][1], samples[i + 1][1]
+            if abs(d1) >= 15.0 and abs(d2) >= 15.0 and d1 * d2 > 0:
+                future_tws = samples[i + 1][0]
+                future_delta = d2
+                break
+        if future_tws is None:
+            return None
+        future_twd = norm360(twd + future_delta)
+        fup = self.boat.target_upwind_twa(future_tws)
+        future_port = norm360(future_twd + fup)
+        future_stbd = norm360(future_twd - fup)
+        future_closer_port = abs(signed_diff(future_port, brg)) <= abs(
+            signed_diff(future_stbd, brg)
+        )
+        # Start on the other side from the one that will be the short layline.
+        return stbd if future_closer_port else port
 
     def _candidate_headings(
         self,
@@ -431,19 +809,95 @@ class IsochroneRouter:
         tws: float,
         twd: float,
         target: tuple[float, float],
+        radius_nm: float = 0.2,
     ) -> list[float]:
-        """Seed mark/VMG → progressive fan → gated sticky parent / opposite VMG."""
-        brg = bearing(node.pos, target)
+        """Seed mark/VMG → progressive fan → opposite board only once it lays."""
+        guide = self._guide(node) if self._guide_pts else target
+        brg = bearing(node.pos, guide)
+        # Within 2 nm, if the mark line is shoal and the bearing itself is not
+        # sailable, creep along the clear heading that ends closest to the mark.
+        # That is the way out of a pocket. Farther away the normal layline rules
+        # still go around an island.
+        if (
+            distance_nm(node.pos, target) < 2.0
+            and self.geo.blocked_segment(node.pos, target)
+            and not self._probe_clear(node.pos, brg, probe_nm=0.4, tws=tws, twd=twd)
+        ):
+            up_lim = self.boat.target_upwind_twa(tws)
+            dn_lim = self.boat.target_downwind_twa(tws)
+            lockout_nm = max(0.5, float(self.p.tack_lockout_nm))
+            fresh = (
+                node.heading is not None
+                and self._sailed_since_tack_nm(node) < lockout_nm
+            )
+            best_h = None
+            best_d = 1e9
+            best_held = None
+            best_held_d = 1e9
+            parent = None
+            if fresh:
+                parent = Node(
+                    lat=node.lat,
+                    lon=node.lon,
+                    t=node.t,
+                    heading=node.heading,
+                    twd=node.twd,
+                )
+            for h in range(0, 360, 15):
+                heading = float(h)
+                twa = twa_from(heading, twd)
+                if not (up_lim <= twa <= min(175.0, dn_lim + 25.0)):
+                    continue
+                if not self._probe_clear(
+                    node.pos, heading, probe_nm=0.5, tws=tws, twd=twd
+                ):
+                    continue
+                end = destination(node.pos, heading, 0.5)
+                dist = distance_nm(end, target)
+                if dist < best_d:
+                    best_d = dist
+                    best_h = heading
+                if parent is not None and _detect_maneuver(
+                    parent, heading, twd, twa
+                ) == "none":
+                    if dist < best_held_d:
+                        best_held_d = dist
+                        best_held = heading
+            # Pocket escape must not thrash under lockout — keep the held board
+            # when it still has water, even if an opposite heading is nearer.
+            if best_held is not None and (
+                best_h is None
+                or _detect_maneuver(parent, best_h, twd, twa_from(best_h, twd))
+                != "none"
+            ):
+                return [best_held]
+            if best_h is not None:
+                return [best_h]
         up_twa = self.boat.target_upwind_twa(tws)
         dn_twa = self.boat.target_downwind_twa(tws)
         port_up = norm360(twd + up_twa)
         stbd_up = norm360(twd - up_twa)
         port_dn = norm360(twd + dn_twa)
         stbd_dn = norm360(twd - dn_twa)
-        seed, seed_mode, twa_brg = self._seed_heading(node, tws, twd, target)
+        seed, seed_mode, _twa_brg = self._seed_heading(
+            node, tws, twd, guide, target, radius_nm
+        )
+        # Wrong-side guide can land in bearing mode aimed reverse of the mark
+        # (seed ~20°/39° while M1 is west). If the mark is still upwind of a
+        # beam reach, force VMG boards — a 70° gate missed mark_twa≈75° and
+        # left only the reverse seed in the fan.
+        mark_twa = twa_from(bearing(node.pos, target), twd)
+        if (
+            seed_mode == "bearing"
+            and mark_twa < 90.0
+            and twa_from(seed, twd) >= 90.0
+        ):
+            seed, seed_mode, _twa_brg = self._seed_heading(
+                node, tws, twd, target, target, radius_nm
+            )
 
-        mark_clear = self._mark_bearing_clear(node.pos, target, tws=tws, twd=twd)
-        extras: set[float] = set()
+        mark_clear = self._mark_bearing_clear(node.pos, guide, tws=tws, twd=twd)
+        extras: list[float] = []
         # Sticky current heading only while continuing a leg — never right after
         # a mark snap (inbound heading points at the *previous* mark).
         if (
@@ -452,30 +906,49 @@ class IsochroneRouter:
             and node.maneuver != "mark"
             and not mark_clear
         ):
-            extras.add(node.heading)
+            extras.append(node.heading)
         # Corridor: after geo rethink, keep prior heading while mark still blocked.
         if node.heading is not None and node.rethink and not mark_clear:
-            extras.add(node.heading)
+            extras.append(node.heading)
 
-        heads = set(
-            self._progressive_fan_from_seed(
-                node.pos,
-                seed,
-                tws,
-                twd,
-                up_twa,
-                dn_twa,
-                always_extra=extras or None,
-            )
+        look = distance_nm(node.pos, guide)
+        short_probe = min(
+            self.p.fan_probe_nm_max,
+            max(self.p.mark_probe_nm * self.p.fan_probe_mark_frac, self.p.fan_probe_nm_min),
         )
-        heads.add(seed)
+        short_ok = self._probe_clear(node.pos, seed, probe_nm=min(short_probe, look), tws=tws, twd=twd)
+        long_ok = self._probe_clear(node.pos, seed, probe_nm=min(look, 8.0), tws=tws, twd=twd)
+        # Long look only for *bearing* seeds when the rhumb is blocked: creep the
+        # corridor. On a VMG upwind/downwind board the long board always hits a
+        # shore eventually — that must not open allow_away and walk to a reverse
+        # gybe in open water (Solent finish spike to 110° while aiming 266°).
+        use_long_look = (
+            seed_mode == "bearing" and short_ok and not long_ok
+        )
+        fanned = self._progressive_fan_from_seed(
+            node.pos,
+            seed,
+            tws,
+            twd,
+            up_twa,
+            dn_twa,
+            always_extra=extras or None,
+            look_nm=look if use_long_look else None,
+            prefer_brg=bearing(node.pos, target),
+        )
+        # Sorted so candidate order is deterministic (Python set order is not).
+        heads: list[float] = []
+        for h in (*fanned, seed):
+            if h not in heads:
+                heads.append(h)
 
         # Open-water diversity: when pointing at the mark is the seed and clear,
         # offer ±one step so prune can prefer a slightly hotter/cooler angle.
         if seed_mode == "bearing" and mark_clear:
             step = self.p.heading_step_deg
-            heads.add(norm360(seed + step))
-            heads.add(norm360(seed - step))
+            for h in (norm360(seed + step), norm360(seed - step)):
+                if h not in heads:
+                    heads.append(h)
 
         # After mark snap / huge course error, score VMG relative to mark seed
         # not the stale inbound heading.
@@ -498,60 +971,441 @@ class IsochroneRouter:
             else stbd_dn
         )
         opp_dn = stbd_dn if same_dn == port_dn else port_dn
-        heads.add(same_up)
-        if twa_brg >= self.p.downwind_twa_gate_deg:
-            heads.add(same_dn)
+        # Already eased off to keep a gybe off the shore. Stay there until the
+        # VMG heading is clear for a mile — turning back for one boat-length and
+        # easing off again is the zigzag in steady wind.
+        if (
+            seed_mode == "dn_vmg"
+            and node.heading is not None
+            and node.maneuver != "mark"
+            and not node.rethink
+        ):
+            held_twa = twa_from(node.heading, twd)
+            eased = (
+                dn_twa < held_twa <= min(175.0, dn_twa + 25.0)
+                and signed_diff(node.heading, twd) * signed_diff(seed, twd) > 0
+                and self._probe_clear(
+                    node.pos, node.heading, probe_nm=0.4, tws=tws, twd=twd
+                )
+            )
+            vmg_open = self._probe_clear(
+                node.pos,
+                seed,
+                probe_nm=min(1.0, distance_nm(node.pos, target)),
+                tws=tws,
+                twd=twd,
+            )
+            if eased and not vmg_open:
+                held = [node.heading]
+                if self._heading_fetches(node.pos, opp_dn, target, radius_nm):
+                    held.append(opp_dn)
+                return held
+        if seed_mode == "up_vmg":
+            if same_up not in heads:
+                heads.append(same_up)
+            # Offer the other board when it lays, OR when the near board is a
+            # shore pocket (clear short, blocked at 1 nm) — otherwise M2→M3
+            # only ever fans the island-bound tack.
+            same_open = self._probe_clear(
+                node.pos,
+                same_up,
+                probe_nm=min(1.5, max(1.0, distance_nm(node.pos, target) * 0.1)),
+                tws=tws,
+                twd=twd,
+            )
+            opp_open = self._probe_clear(
+                node.pos, opp_up, probe_nm=0.4, tws=tws, twd=twd
+            )
+            wrong_tack = (
+                node.heading is not None
+                and abs(
+                    signed_diff(
+                        node.heading, self._ban_aim_bearing(node, target)
+                    )
+                )
+                > 50.0
+            )
+            if self._heading_fetches(node.pos, opp_up, target, radius_nm) or (
+                not same_open and opp_open
+            ) or (wrong_tack and opp_open):
+                if opp_up not in heads:
+                    heads.append(opp_up)
+        elif seed_mode == "dn_vmg":
+            if same_dn not in heads:
+                heads.append(same_dn)
+            if self._heading_fetches(node.pos, opp_dn, target, radius_nm):
+                if opp_dn not in heads:
+                    heads.append(opp_dn)
 
-        rem = distance_nm(node.pos, target)
-        course_err = abs(signed_diff(brg, ref))
-        can_point = twa_brg >= up_twa
-        can_run = twa_brg <= dn_twa
-        # Opposite-tack only while we cannot point at the mark, not on final approach.
-        # Use 90° (abeam) so we don't tack just because the mark is ~70° off the bow.
-        if (
-            not can_point
-            and rem >= self.p.near_mark_nm
-            and (
-                course_err > self.p.opposite_maneuver_course_err_deg
-                or (
-                    node.heading is not None
-                    and twa_from(node.heading, twd)
-                    < up_twa - self.p.opposite_tack_twa_slack_deg
-                )
-                or abs(signed_diff(same_up, ref))
-                > self.p.opposite_maneuver_heading_spread_deg
-            )
-        ):
-            heads.add(opp_up)
-        # Opposite gybe: mirror of opposite tack when mark is deeper than DN VMG.
-        if (
-            not can_run
-            and rem >= self.p.near_mark_nm
-            and (
-                course_err > self.p.opposite_maneuver_course_err_deg
-                or (
-                    node.heading is not None
-                    and twa_from(node.heading, twd)
-                    > dn_twa + self.p.opposite_gybe_twa_slack_deg
-                )
-                or abs(signed_diff(same_dn, ref))
-                > self.p.opposite_maneuver_heading_spread_deg
-            )
-        ):
-            heads.add(opp_dn)
+        # A tack/gybe inside the lockout distance is the Solent thrash. Allow the
+        # opposite board only once the held board is into shore (real channel
+        # edge) or the other board already lays the mark.
+        lockout_nm = max(0.5, float(self.p.tack_lockout_nm))
+        fresh_tack = self._sailed_since_tack_nm(node) < lockout_nm
 
         out: list[float] = []
-        forced = {seed, same_up, same_dn, opp_up, opp_dn} | extras
+        forced = {seed, same_up, same_dn, opp_up, opp_dn, *extras}
         for h in heads:
             twa = twa_from(h, twd)
-            if h in forced or up_twa <= twa <= dn_twa:
+            by_the_lee = (
+                seed_mode == "dn_vmg"
+                and dn_twa < twa <= min(175.0, dn_twa + 25.0)
+                and signed_diff(h, twd) * signed_diff(seed, twd) > 0
+            )
+            if h in forced or up_twa <= twa <= dn_twa or by_the_lee:
                 out.append(h)
-        return list(dict.fromkeys(out))
+        # Already >50° off the race aim: lockout must not trap us on a reverse board.
+        wrong_way_held = (
+            node.heading is not None
+            and abs(signed_diff(node.heading, self._ban_aim_bearing(node, target)))
+            > 50.0
+        )
+        # Wind flip / pinch: held board is no longer sailable — release lockout
+        # and do not re-sticky that heading in later filters (oscillating westerly
+        # left only an unsailable 16° TWA board).
+        held_sailable = node.heading is None or self.boat.bsp(
+            tws, twa_from(node.heading, twd)
+        ) > 0.05
+        if (
+            fresh_tack
+            and node.heading is not None
+            and not wrong_way_held
+            and held_sailable
+        ):
+            parent = Node(
+                lat=node.lat,
+                lon=node.lon,
+                t=node.t,
+                heading=node.heading,
+                twd=node.twd,
+            )
+            held = [
+                h
+                for h in out
+                if _detect_maneuver(parent, h, twd, twa_from(h, twd)) == "none"
+            ]
+            # Always treat the live heading as held — fan/seed may have dropped it.
+            if node.heading not in held:
+                held.append(node.heading)
+            short_probe = min(
+                self.p.fan_probe_nm_min, max(distance_nm(node.pos, guide), 0.05)
+            )
+            shore_probe = max(short_probe, float(self.p.tack_shore_probe_nm))
+            clear_held = [
+                h
+                for h in held
+                if self._probe_clear(node.pos, h, probe_nm=short_probe, tws=tws, twd=twd)
+            ]
+            # Shore means NO held heading is clear for a real boat-length.
+            # A failed long probe with a clear short probe is mid-channel noise —
+            # that used to open the opposite board and thrash every 0.6 nm.
+            held_into_shore = not any(
+                self._probe_clear(node.pos, h, probe_nm=shore_probe, tws=tws, twd=twd)
+                for h in held
+            )
+            lays = []
+            if distance_nm(node.pos, target) >= 0.45:
+                lays = [
+                    h
+                    for h in out
+                    if h not in held
+                    and self._heading_fetches(node.pos, h, target, radius_nm)
+                ]
+            mark_twa = twa_from(self._ban_aim_bearing(node, target), twd)
+            # Opposite boards must come from the full fan/VMG set, not from
+            # `out` after held-only filtering (that made shore-escape a no-op).
+            opp_pool = [
+                h
+                for h in (*heads, same_up, opp_up, same_dn, opp_dn, seed)
+                if h not in held
+            ]
+
+            def _opp_upwind() -> list[float]:
+                opp: list[float] = []
+                for h in opp_pool:
+                    if not self._probe_clear(
+                        node.pos, h, probe_nm=short_probe, tws=tws, twd=twd
+                    ):
+                        continue
+                    htwa = twa_from(h, twd)
+                    # Ban downwind escapes on an upwind leg. Do NOT also require
+                    # |heading-aim|≤90° — the other close-hauled board is often
+                    # ~90–110° off the mark and is the only Needles escape.
+                    if mark_twa <= 70.0 and htwa >= 90.0:
+                        continue
+                    opp.append(h)
+                return list(dict.fromkeys(opp))
+
+            def _pocket_upwind() -> list[float]:
+                """Scan eased upwind headings when both VMG boards are blocked."""
+                aim = self._ban_aim_bearing(node, target)
+                dist0 = distance_nm(node.pos, target)
+                probe = max(short_probe, 0.3)
+
+                def scan(max_away: float) -> list[float]:
+                    found: list[float] = []
+                    for deg in range(0, 360, 15):
+                        h = float(deg)
+                        htwa = twa_from(h, twd)
+                        if htwa < up_twa - 1.0 or htwa >= 90.0:
+                            continue
+                        if not self._probe_clear(
+                            node.pos, h, probe_nm=short_probe, tws=tws, twd=twd
+                        ):
+                            continue
+                        end = destination(node.pos, h, probe)
+                        if distance_nm(end, target) > dist0 + max_away:
+                            continue
+                        found.append(h)
+                    found.sort(
+                        key=lambda h: (
+                            distance_nm(destination(node.pos, h, probe), target),
+                            abs(signed_diff(h, aim)),
+                        )
+                    )
+                    return found[:4]
+
+                # Prefer water that closes the mark; if the pocket has none,
+                # allow a short lateral creep (Needles) rather than dying.
+                return scan(0.15) or scan(0.45)
+
+            if clear_held and not held_into_shore:
+                # Mid-channel lockout: stay on the held board. Layline only.
+                out = [*clear_held, *lays]
+            elif clear_held and held_into_shore:
+                # Short probe OK but shore probe fails — approaching the bank.
+                # Keep a creep on held AND allow a clear opposite upwind board
+                # (otherwise we sail into the Needles and the frontier dies).
+                out = [*clear_held, *lays, *_opp_upwind()]
+            elif held_into_shore or not held:
+                # Truly stuck: opposite VMG board, else eased pocket scan.
+                opp = _opp_upwind() or _pocket_upwind()
+                out = opp if opp else (lays if lays else clear_held or held)
+            else:
+                # Held exists but short-probe failed (whisker): prefer lays, else held.
+                out = lays if lays else held
+                if not out or (
+                    node.heading is not None
+                    and not self._probe_clear(
+                        node.pos, node.heading, probe_nm=short_probe, tws=tws, twd=twd
+                    )
+                ):
+                    pocket = _pocket_upwind()
+                    if pocket:
+                        out = pocket
+        elif wrong_way_held:
+            # Escape the reverse board: prefer seed / anything toward the aim.
+            aim_brg = self._ban_aim_bearing(node, target)
+            rescue = [
+                h
+                for h in out
+                if self._heading_progresses(node, h, target)
+                and abs(signed_diff(h, aim_brg)) <= 50.0
+            ]
+            if not rescue and self._heading_progresses(node, seed, target):
+                rescue = [seed]
+            if rescue:
+                out = rescue
+        out = list(dict.fromkeys(out))
+        # Drop headings that increase chain rem. Always — even when the rhumb to
+        # the guide clips shoal — otherwise Solent wrong-way gybes stay in the fan.
+        if out and distance_nm(node.pos, target) > 1.5:
+            def _open_nm(h: float, nm: float = 1.0) -> bool:
+                return self._probe_clear(
+                    node.pos, h, probe_nm=nm, tws=tws, twd=twd
+                )
+
+            ranked = sorted(
+                out,
+                key=lambda h: self._rem_after_heading(node, h, target),
+            )
+            progressed = [
+                h for h in ranked if self._heading_progresses(node, h, target)
+            ]
+            # A short step into a shore pocket can look like rem progress while
+            # the open opposite board costs a fraction of a mile of rem. Prefer
+            # progressed headings that stay clear for 1 nm; else keep an open seed.
+            open_prog = [h for h in progressed if _open_nm(h)]
+            if open_prog:
+                out = open_prog
+            elif _open_nm(seed):
+                out = [seed]
+            elif progressed:
+                out = progressed
+            else:
+                # Nothing in the fan progresses — do NOT keep a reverse heading.
+                # Fall back to seed / held when those reduce rem and stay open.
+                fallback: list[float] = []
+                for h in (seed, node.heading):
+                    if h is None:
+                        continue
+                    if self._heading_progresses(node, float(h), target) and _open_nm(
+                        float(h)
+                    ):
+                        fallback.append(float(h))
+                if not fallback:
+                    for h in (seed, node.heading):
+                        if h is None:
+                            continue
+                        if self._heading_progresses(node, float(h), target):
+                            fallback.append(float(h))
+                out = fallback if fallback else ranked[:1]
+        # Hard ban: never sail >90° off the race aim *downwind*. Upwind boards
+        # (twa<90) are allowed even when ~100° off the mark — that is a normal
+        # beat, and banning them stranded the Needles approach. Skip inside
+        # 1.5 nm so a final lay/creep is not stripped.
+        if out and distance_nm(node.pos, target) > 1.5:
+            brg_aim = self._ban_aim_bearing(node, target)
+            kept = [
+                h
+                for h in out
+                if abs(signed_diff(h, brg_aim)) <= 90.0 or twa_from(h, twd) < 90.0
+            ]
+            if kept:
+                out = kept
+            elif (
+                held_sailable
+                and node.heading is not None
+                and (
+                    abs(signed_diff(node.heading, brg_aim)) <= 90.0
+                    or twa_from(node.heading, twd) < 90.0
+                )
+            ):
+                out = [node.heading]
+            else:
+                out = [seed]
+        # Upwind-to-mark: never offer a downwind/reach gybe unless it lays.
+        # That was the V-spike south-then-north on the Solent westbound beat.
+        if out and distance_nm(node.pos, target) > 1.5:
+            aim_twa = twa_from(self._ban_aim_bearing(node, target), twd)
+            if aim_twa < 90.0:
+                up_only = [
+                    h
+                    for h in out
+                    if twa_from(h, twd) < 90.0
+                    or self._heading_fetches(node.pos, h, target, radius_nm)
+                ]
+                if up_only:
+                    out = up_only
+                elif twa_from(seed, twd) < 90.0:
+                    out = [seed]
+                else:
+                    # Seed itself is a reverse gybe — force the upwind VMG board.
+                    out = [same_up]
+                # Always keep a clear held upwind board — dropping it for a
+                # reverse seed emptied the Needles frontier. Skip when the held
+                # board is pinched/unsailable after a wind flip, and skip right
+                # after a mark snap (inbound heading points at the last mark /
+                # into the island — that re-stuck M2→M3 on a full Solent loop).
+                if (
+                    held_sailable
+                    and node.maneuver != "mark"
+                    and node.heading is not None
+                    and twa_from(node.heading, twd) < 90.0
+                    and self._probe_clear(
+                        node.pos,
+                        node.heading,
+                        probe_nm=min(self.p.fan_probe_nm_min, 0.25),
+                        tws=tws,
+                        twd=twd,
+                    )
+                    and node.heading not in out
+                ):
+                    out = [node.heading, *out]
+        # Drop pinched / zero-bsp headings (wind flip mid-leg).
+        out = [h for h in out if self.boat.bsp(tws, twa_from(h, twd)) > 0.05]
+        # Empty fan (filters removed everything) — sail the seed.
+        if not out:
+            out = [seed] if self.boat.bsp(tws, twa_from(seed, twd)) > 0.05 else [same_up]
+        # A 60° gybe beside a headland is the spike: the long probe only liked a
+        # heading aimed at open water. Turn at most 25° when a nearer heading is
+        # clear for a quarter mile, and keep a layline tack or gybe that fetches
+        # the race mark.
+        wrong_way = (
+            node.heading is not None
+            and abs(signed_diff(node.heading, bearing(node.pos, guide))) > 50.0
+        )
+        if (
+            node.heading is not None
+            and node.maneuver != "mark"
+            and not wrong_way
+            and held_sailable
+        ):
+            near = [
+                h
+                for h in out
+                if abs(signed_diff(h, node.heading)) <= 25.0
+                and self._probe_clear(node.pos, h, probe_nm=0.25, tws=tws, twd=twd)
+            ]
+            if near:
+                lays: list[float] = []
+                if distance_nm(node.pos, target) >= 0.45:
+                    lays = [
+                        h
+                        for h in out
+                        if h not in near
+                        and self._heading_fetches(node.pos, h, target, radius_nm)
+                    ]
+                out = [*near, *lays]
+        return out
+
+    def _rem_after_heading(
+        self, node: Node, heading: float, tgt: tuple[float, float]
+    ) -> float:
+        """Chain rem after a short probe on ``heading`` (inf if the probe is blocked)."""
+        probe = max(0.2, float(self.p.progress_probe_nm))
+        end = destination(node.pos, heading, probe)
+        if self.geo.blocked_point(end) or self._segment_blocked_ahead(node.pos, end):
+            return 1e9
+        trial = Node(
+            lat=end[0],
+            lon=end[1],
+            t=node.t,
+            heading=heading,
+            guide_idx=node.guide_idx,
+        )
+        return self._rem(trial, tgt)
+
+    def _heading_progresses(
+        self, node: Node, heading: float, tgt: tuple[float, float]
+    ) -> bool:
+        """True when a short step on ``heading`` does not increase chain rem."""
+        after = self._rem_after_heading(node, heading, tgt)
+        # Blocked probe is not progress — keeping it let reverse gybes survive.
+        if after >= 1e9:
+            return False
+        return after <= self._rem(node, tgt) + float(self.p.progress_rem_slack_nm)
+
+    def _sailed_since_tack_nm(self, node: Node) -> float:
+        """Distance sailed since the most recent tack or gybe on this leg.
+
+        Mark snaps start a new leg. Walking into the previous leg's tack history
+        would keep the post-snap fan locked to the inbound board — and that board
+        points at the mark just rounded, so every candidate geo-hits (Stromboli
+        → Favignana died in two steps with a 357-node parent chain).
+
+        Once we have walked past the lockout distance without finding a maneuver,
+        return a large value so the lockout releases (returning the walked
+        distance itself was wrong once lockout grew above 1 nm).
+        """
+        lockout = max(0.5, float(self.p.tack_lockout_nm))
+        dist = 0.0
+        cur: Node | None = node
+        while cur is not None and cur.parent is not None:
+            if cur.maneuver == "mark":
+                return 999.0
+            dist += distance_nm(cur.parent.pos, cur.pos)
+            if cur.maneuver in ("tack", "gybe"):
+                return dist
+            if dist >= lockout:
+                return 999.0
+            cur = cur.parent
+        return dist if cur is not None and cur.maneuver in ("tack", "gybe") else 999.0
 
     def _score(self, node: Node, target: tuple[float, float]) -> float:
         return _prune_score(
             node,
-            target,
+            self._rem(node, target),
             self.p.maneuver_prune_nm,
             self.p.max_consecutive_maneuvers,
             self.p.maneuver_overflow_nm,
@@ -566,7 +1420,7 @@ class IsochroneRouter:
     ) -> list[Node]:
         if not nodes:
             return nodes
-        best_dmg = min(nodes, key=lambda n: _remaining_nm(n, target))
+        best_dmg = min(nodes, key=lambda n: self._rem(n, target))
         by_sector: dict[int, Node] = {}
         for n in nodes:
             sec = int(bearing(origin, n.pos) // self.p.sector_width_deg)
@@ -604,21 +1458,64 @@ class IsochroneRouter:
             return False
         return abs(signed_diff(twd1, twd0)) >= self.p.wind_delta_twd_deg
 
+    def _segment_blocked_ahead(
+        self, start: tuple[float, float], end: tuple[float, float]
+    ) -> bool:
+        """Blocked-segment test that can leave a already-illegal start cell.
+
+        ``GeoContext.blocked_segment`` samples the start point, so a boat that
+        committed onto a depth pocket can never take another step. When the
+        start is already blocked, only land-crossings and *ahead* samples count.
+        """
+        if self.geo.land.segment_crosses_land(start, end):
+            return True
+        if self.geo.blocked_point(end):
+            return True
+        skip_start = self.geo.blocked_point(start)
+        if not skip_start and self.geo.blocked_segment(start, end):
+            return True
+        if not skip_start:
+            return False
+        dist = distance_nm(start, end)
+        steps = max(2, int(dist / max(0.05, float(self.geo.segment_sample_nm))))
+        for i in range(1, steps + 1):
+            f = i / steps
+            lat = start[0] + f * (end[0] - start[0])
+            lon = start[1] + f * (end[1] - start[1])
+            if self.geo.blocked_point((lat, lon)):
+                return True
+        return False
+
     def _last_legal_point(
         self,
         start: tuple[float, float],
         end: tuple[float, float],
     ) -> tuple[float, float] | None:
-        if not self.geo.blocked_segment(start, end) and not self.geo.blocked_point(end):
+        if not self._segment_blocked_ahead(start, end) and not self.geo.blocked_point(
+            end
+        ):
             return end
+        # Leave a stranded start by walking toward the first clear sample.
         if self.geo.blocked_point(start):
+            dist = distance_nm(start, end)
+            steps = max(4, int(dist / max(0.05, float(self.geo.segment_sample_nm))))
+            for i in range(1, steps + 1):
+                f = i / steps
+                mid = (
+                    start[0] + f * (end[0] - start[0]),
+                    start[1] + f * (end[1] - start[1]),
+                )
+                if not self.geo.blocked_point(mid) and not self.geo.land.segment_crosses_land(
+                    start, mid
+                ):
+                    return mid
             return None
         lo_lat, lo_lon = start
         hi_lat, hi_lon = end
         last_ok: tuple[float, float] | None = start
         for _ in range(10):
             mid = ((lo_lat + hi_lat) * 0.5, (lo_lon + hi_lon) * 0.5)
-            if self.geo.blocked_segment(start, mid) or self.geo.blocked_point(mid):
+            if self._segment_blocked_ahead(start, mid) or self.geo.blocked_point(mid):
                 hi_lat, hi_lon = mid
             else:
                 last_ok = mid
@@ -636,20 +1533,110 @@ class IsochroneRouter:
         tws: float,
         twd: float,
     ) -> bool:
-        """Stop escape/beat commit when mark is free again or past layline."""
+        """Stop escape/beat commit when the target is free again or past layline.
+
+        ``tgt`` is the active guidance point, so rounding a headland ends the
+        commit and re-seeds against the next one.
+        """
         brg = bearing(pos, tgt)
         if abs(signed_diff(heading, brg)) < self.p.rethink_heading_vs_bearing_deg:
             return False
         up_twa = self.boat.target_upwind_twa(tws)
-        can_point = twa_from(brg, twd) >= up_twa
-        mark_clear = self._mark_bearing_clear(pos, tgt, tws=tws, twd=twd)
-        if mark_clear and can_point:
-            return True
-        if can_point and abs(signed_diff(brg, heading)) > self.p.layline_stop_deg:
-            return True
-        if abs(signed_diff(brg, heading)) > self.p.past_layline_deg:
-            return True
-        return False
+        dn_twa = self.boat.target_downwind_twa(tws)
+        twa_brg = twa_from(brg, twd)
+        # A reach aims at the guide once that line is open. A beat or a run
+        # deliberately sails off the bearing, so "not pointed at the waypoint"
+        # is not a reason to turn. Past the layline still is.
+        if up_twa <= twa_brg <= dn_twa:
+            if not self._mark_bearing_clear(pos, tgt, tws=tws, twd=twd):
+                return False
+            return abs(signed_diff(heading, brg)) > self.p.rethink_heading_vs_bearing_deg
+        return abs(signed_diff(brg, heading)) > self.p.past_layline_deg
+
+    def _other_board_lays(
+        self,
+        heading: float,
+        pos: tuple[float, float],
+        mark: tuple[float, float],
+        tws: float,
+        twd: float,
+        radius_nm: float,
+    ) -> bool:
+        """True when the board we are not on now fetches the race mark.
+
+        Checked against the mark, not a headland point, so a commit ends on the
+        layline instead of sailing past it.
+        """
+        twa_brg = twa_from(bearing(pos, mark), twd)
+        up_twa = self.boat.target_upwind_twa(tws)
+        dn_twa = self.boat.target_downwind_twa(tws)
+        if twa_brg < up_twa:
+            a, b = norm360(twd + up_twa), norm360(twd - up_twa)
+        elif twa_brg > dn_twa:
+            a, b = norm360(twd + dn_twa), norm360(twd - dn_twa)
+        else:
+            return False
+        other = a if abs(signed_diff(a, heading)) >= abs(signed_diff(b, heading)) else b
+        if abs(signed_diff(other, heading)) < 20.0:
+            return False
+        if not self._heading_fetches(pos, other, mark, radius_nm):
+            return False
+        rem = distance_nm(pos, mark)
+        return self._probe_clear(
+            pos,
+            other,
+            probe_nm=min(self.p.mark_probe_nm, max(rem, 0.05)),
+            tws=tws,
+            twd=twd,
+        )
+
+    def _dt_on_planned_wind(
+        self,
+        lat: float,
+        lon: float,
+        t: datetime,
+        heading: float,
+        tws0: float,
+        twd0: float,
+        dt: float,
+    ) -> float:
+        """Shorten a substep that would be sailed on a different wind.
+
+        A square-wave shift faster than ``time_step_s`` otherwise lands the
+        midpoint sample in the no-go and the commit returns no movement.
+        """
+
+        def stable(dt_try: float) -> bool:
+            if dt_try < 5.0:
+                return False
+            w = self.wind.wind_at(lat, lon, t + timedelta(seconds=dt_try * 0.5))
+            if w is None:
+                return False
+            tws, twd = w
+            if self._wind_changed(tws0, twd0, tws, twd):
+                return False
+            return self.boat.bsp(tws, twa_from(heading, twd)) > 0.05
+
+        if stable(dt):
+            return dt
+        lo, hi = 5.0, dt
+        best = 0.0
+        for _ in range(8):
+            mid = (lo + hi) * 0.5
+            if stable(mid):
+                best = mid
+                lo = mid
+            else:
+                hi = mid
+        if best >= 5.0:
+            return best
+        # No midpoint stays on this wind. Sail a short slice on the wind now.
+        w_now = self.wind.wind_at(lat, lon, t)
+        if w_now is None:
+            return 0.0
+        if self.boat.bsp(w_now[0], twa_from(heading, w_now[1])) <= 0.05:
+            return 0.0
+        return min(dt, 15.0)
 
     def _commit_heading(
         self,
@@ -660,14 +1647,45 @@ class IsochroneRouter:
         max_commit_s: float,
         tws0: float,
         twd0: float,
+        arrive_nm: float = 0.0,
     ) -> tuple[Node | None, bool]:
-        """Hold heading until rethink (mark clear / layline / wind / geo) or cap."""
+        """Hold heading until rethink (mark clear / layline / wind / geo) or cap.
+
+        The guidance point is resolved once here rather than per substep: a
+        commit *is* the decision to sail at one target, and re-resolving mid-
+        commit would cost a line-of-sight test per substep.
+        """
+        guide = self._guide(node)
+        guide_idx = node.guide_idx
         twa0 = twa_from(heading, twd0)
         bsp0 = self.boat.bsp(tws0, twa0)
         if bsp0 <= 0:
             return None, False
 
         maneuver = _detect_maneuver(node, heading, twd0, twa0)
+        # Lockout at commit (candidates already filter): only refuse a maneuver
+        # when the held board still has shore-probe water and the new heading
+        # neither lays nor recovers from a reverse board. Harder bans live in
+        # _candidate_headings — repeating them here stranded the Needles approach.
+        if (
+            maneuver in ("tack", "gybe")
+            and node.heading is not None
+            and node.maneuver != "mark"
+        ):
+            lockout_nm = max(0.5, float(self.p.tack_lockout_nm))
+            if self._sailed_since_tack_nm(node) < lockout_nm:
+                shore = max(0.5, float(self.p.tack_shore_probe_nm))
+                held_into_shore = not self._probe_clear(
+                    node.pos, node.heading, probe_nm=shore, tws=tws0, twd=twd0
+                )
+                lays = self._heading_fetches(
+                    node.pos, heading, tgt, max(arrive_nm, 0.2)
+                )
+                brg_aim = self._ban_aim_bearing(node, tgt)
+                reverse = abs(signed_diff(node.heading, brg_aim)) > 50.0
+                recovering = abs(signed_diff(heading, brg_aim)) <= 50.0
+                if not lays and not held_into_shore and not (reverse and recovering):
+                    return None, False
         pen = 0.0
         if maneuver == "tack":
             pen = self.boat.config.tack_penalty_s
@@ -692,7 +1710,17 @@ class IsochroneRouter:
         wind_left = _seconds_of_wind_remaining(self.wind, node.t)
         if wind_left is not None:
             budget = min(budget, max(0.0, wind_left - 1.0))
-        rem0 = distance_nm(node.pos, tgt)
+        # Clip to the *current objective*, not the whole corridor: budgeting the
+        # full way round a headland lets one commit sail straight past the bend.
+        # Without a chain the guide is the mark, so this is unchanged.
+        # Budget against the farther of guide and a fraction of mark rem. A
+        # wrong-side guide a boat-length away used to zero the budget and kill
+        # every Needles escape commit (bsp≈7kn × 0.01nm → budget < 1s).
+        rem0 = max(
+            distance_nm(node.pos, guide),
+            min(distance_nm(node.pos, tgt), 3.0) * 0.25,
+            0.4,
+        )
         if bsp0 > 0:
             budget = min(
                 budget, (rem0 / bsp0) * 3600.0 + self.p.commit_arrival_buffer_s
@@ -701,7 +1729,7 @@ class IsochroneRouter:
         if maneuver in ("tack", "gybe"):
             budget = min(budget, float(self.p.time_step_s))
         # Constraint mode: creep one substep while mark bearing is blocked.
-        if not self._mark_bearing_clear(node.pos, tgt, tws=tws0, twd=twd0):
+        if not self._mark_bearing_clear(node.pos, guide, tws=tws0, twd=twd0):
             budget = min(budget, float(self.p.time_step_s))
         if budget < 1.0:
             return None, False
@@ -725,16 +1753,32 @@ class IsochroneRouter:
             if elapsed > 1e-6 and self._should_rethink_heading(
                 heading=heading,
                 pos=(lat, lon),
-                tgt=tgt,
+                tgt=guide,
                 tws=last_tws,
                 twd=last_twd,
             ):
                 need_rethink = True
                 break
-
-            w = self.wind.wind_at(lat, lon, t + timedelta(seconds=dt * 0.5))
-            if w is None:
+            arrive_r = arrive_nm if arrive_nm > 0 else self.p.mark_arrival_break_nm
+            if elapsed > 1e-6 and self._other_board_lays(
+                heading, (lat, lon), tgt, last_tws, last_twd, arrive_r
+            ):
+                need_rethink = True
                 break
+
+            dt = self._dt_on_planned_wind(
+                lat, lon, t, heading, tws0, twd0, dt
+            )
+            if dt < 5.0:
+                need_rethink = True
+                break
+            sail_dt = dt
+            if elapsed < 1e-9 and pen > 0:
+                sail_dt = max(0.0, dt - pen)
+            w = self.wind.wind_at(lat, lon, t + timedelta(seconds=min(dt * 0.5, 1.0)))
+            if w is None:
+                # Fall back to the wind we planned this step on.
+                w = (tws0, twd0)
             tws, twd = w
             # Only rethink on wind change after we have already sailed — otherwise
             # light-air TWD noise aborts the first substep with elapsed=0 and the
@@ -746,12 +1790,18 @@ class IsochroneRouter:
             twa = twa_from(heading, twd)
             bsp = self.boat.bsp(tws, twa)
             if bsp <= 0:
-                break
+                # The sample drifted into the no-go. Sail this slice on the
+                # wind at the start of the slice, which was sailable.
+                tws, twd = tws0, twd0
+                twa = twa_from(heading, twd)
+                bsp = self.boat.bsp(tws, twa)
+                if bsp <= 0:
+                    break
 
             ctw = heading + self.boat.leeway_offset(tws, bsp, twd, heading)
             vx, vy = vector(norm360(ctw), bsp)
             nlat, nlon = _advance(lat, lon, vx, vy, sail_dt)
-            if self.geo.blocked_segment((lat, lon), (nlat, nlon)) or self.geo.blocked_point(
+            if self._segment_blocked_ahead((lat, lon), (nlat, nlon)) or self.geo.blocked_point(
                 (nlat, nlon)
             ):
                 legal = self._last_legal_point((lat, lon), (nlat, nlon))
@@ -772,6 +1822,24 @@ class IsochroneRouter:
                 need_rethink = True
                 break
 
+            arrive = arrive_nm if arrive_nm > 0 else self.p.mark_arrival_break_nm
+            if distance_nm((nlat, nlon), tgt) <= arrive and distance_nm((lat, lon), tgt) > arrive:
+                lo, hi = 0.0, 1.0
+                best_f = 1.0
+                for _ in range(10):
+                    mid = (lo + hi) * 0.5
+                    mlat = lat + (nlat - lat) * mid
+                    mlon = lon + (nlon - lon) * mid
+                    if distance_nm((mlat, mlon), tgt) <= arrive:
+                        best_f = mid
+                        hi = mid
+                    else:
+                        lo = mid
+                nlat = lat + (nlat - lat) * best_f
+                nlon = lon + (nlon - lon) * best_f
+                dt *= best_f
+                sail_dt *= best_f
+
             lat, lon = nlat, nlon
             elapsed += dt
             sail_elapsed += sail_dt
@@ -779,21 +1847,48 @@ class IsochroneRouter:
             last_tws, last_twd = tws, twd
             last_bsp, last_twa = bsp, twa
 
-            if distance_nm((lat, lon), tgt) <= self.p.mark_arrival_break_nm:
+            if distance_nm((lat, lon), tgt) <= arrive:
+                break
+
+            # Rounding a headland mid-commit changes the objective, and the
+            # mask line-of-sight test is cheap enough to run every substep.
+            if self._advance_guide((lat, lon), guide_idx) != guide_idx:
+                need_rethink = True
                 break
 
             if self._should_rethink_heading(
                 heading=heading,
                 pos=(lat, lon),
-                tgt=tgt,
+                tgt=guide,
                 tws=last_tws,
                 twd=last_twd,
             ):
                 need_rethink = True
                 break
 
-        if elapsed < 1.0 and sail_elapsed < 1.0:
+        arrive_now = arrive_nm if arrive_nm > 0 else self.p.mark_arrival_break_nm
+        on_mark = distance_nm((lat, lon), tgt) <= arrive_now + 1e-3
+        if elapsed < 1.0 and sail_elapsed < 1.0 and not on_mark:
             return None, geo_hit
+
+        # The sailed substeps can bend around a point while the straight chord
+        # between the commit ends cuts land. Keep the furthest point whose
+        # chord from the start of this commit is still clear.
+        blocked_chord = self._segment_blocked_ahead(node.pos, (lat, lon)) or self.geo.blocked_point(
+            (lat, lon)
+        )
+        if blocked_chord:
+            legal = self._last_legal_point(node.pos, (lat, lon))
+            if legal is None:
+                return None, True
+            frac = distance_nm(node.pos, legal) / max(distance_nm(node.pos, (lat, lon)), 1e-9)
+            lat, lon = legal
+            elapsed *= frac
+            sail_elapsed *= frac
+            geo_hit = True
+            need_rethink = True
+            if elapsed < 1.0 and sail_elapsed < 1.0:
+                return None, True
 
         wall = max(elapsed, sail_elapsed)
         sog_eff = last_bsp * (sail_elapsed / wall) if wall > 0 else last_bsp
@@ -822,6 +1917,7 @@ class IsochroneRouter:
             depth_m=depth_m,
             hazard_cost=0.0,
             rethink=need_rethink,
+            guide_idx=node.guide_idx,
         )
         return child, geo_hit
 
@@ -830,6 +1926,7 @@ class IsochroneRouter:
         frontier: list[Node],
         tgt: tuple[float, float],
         max_commit_s: float,
+        arrive_nm: float,
     ) -> tuple[list[Node], int, int]:
         nxt: list[Node] = []
         n_tried = 0
@@ -845,7 +1942,7 @@ class IsochroneRouter:
                 self.p.min_bsp_fraction_of_beat * beat_bsp if beat_bsp > 0 else 0.0
             )
 
-            for heading in self._candidate_headings(node, tws, twd, tgt):
+            for heading in self._candidate_headings(node, tws, twd, tgt, arrive_nm):
                 n_tried += 1
                 twa = twa_from(heading, twd)
                 bsp = self.boat.bsp(tws, twa)
@@ -858,6 +1955,7 @@ class IsochroneRouter:
                     heading,
                     tgt,
                     max_commit_s=max_commit_s,
+                    arrive_nm=arrive_nm,
                     tws0=tws,
                     twd0=twd,
                 )
@@ -908,10 +2006,115 @@ class IsochroneRouter:
                             n_maneuvers=child.n_maneuvers,
                             depth_m=child.depth_m,
                             hazard_cost=0.0,
+                            guide_idx=child.guide_idx,
                         )
                     )
                     break
         return found
+
+    def _guide_blocked(self, node: Node, tgt: tuple[float, float]) -> bool:
+        """True when land/shoal sits between the boat and its current aim point."""
+        if self.geo.blocked_segment(node.pos, tgt):
+            return True
+        if self._chain is None or not self._guide_pts:
+            return False
+        guide = self._guide(node)
+        return self.geo.blocked_segment(node.pos, guide)
+
+    def _escape_frontier(
+        self,
+        frontier: list[Node],
+        tgt: tuple[float, float],
+        radius_nm: float,
+    ) -> list[Node]:
+        """Sail into clear water when the mark/guide line is blocked and progress stopped.
+
+        The normal fan keeps aiming at the mark and the stall counter then gives
+        up. A short step toward clear water that reduces chain rem is how you
+        leave a shoal pocket or the wrong side of a headland.
+        """
+        node = min(frontier, key=lambda n: self._rem(n, tgt))
+        w = self.wind.wind_at(node.lat, node.lon, node.t)
+        if w is None:
+            return []
+        tws, twd = w
+        up_twa = self.boat.target_upwind_twa(tws)
+        dn_twa = self.boat.target_downwind_twa(tws)
+        rem0 = self._rem(node, tgt)
+        brg_aim = self._ban_aim_bearing(node, tgt)
+        aim_twa = twa_from(brg_aim, twd)
+        dist0 = distance_nm(node.pos, tgt)
+        lockout_nm = max(0.5, float(self.p.tack_lockout_nm))
+        fresh = (
+            node.heading is not None
+            and self._sailed_since_tack_nm(node) < lockout_nm
+        )
+        shore = max(0.5, float(self.p.tack_shore_probe_nm))
+        held_into_shore = node.heading is None or not self._probe_clear(
+            node.pos, node.heading, probe_nm=shore, tws=tws, twd=twd
+        )
+        parent = None
+        if fresh:
+            parent = Node(
+                lat=node.lat,
+                lon=node.lon,
+                t=node.t,
+                heading=node.heading,
+                twd=node.twd,
+            )
+        children: list[Node] = []
+        for h in range(0, 360, 20):
+            heading = float(h)
+            twa = twa_from(heading, twd)
+            if not (up_twa <= twa <= min(175.0, dn_twa + 25.0)):
+                continue
+            # Same anti-spike rules as _candidate_headings — escape used to
+            # bypass them and inject the Solent NNE gybe.
+            if abs(signed_diff(heading, brg_aim)) > 90.0 and twa >= 90.0:
+                continue
+            if aim_twa < 90.0 and twa >= 90.0:
+                continue
+            if not self._probe_clear(node.pos, heading, probe_nm=0.8, tws=tws, twd=twd):
+                continue
+            # Prefer chain-rem progress; if the guide is stale, fall back to
+            # closing distance on the race mark (Needles pocket).
+            end = destination(node.pos, heading, 0.8)
+            trial = Node(
+                lat=end[0], lon=end[1], t=node.t, heading=heading, guide_idx=node.guide_idx
+            )
+            rem_ok = self._rem(trial, tgt) <= rem0 + float(self.p.progress_rem_slack_nm)
+            mark_ok = distance_nm(end, tgt) <= dist0 + float(self.p.progress_rem_slack_nm)
+            if not rem_ok and not mark_ok:
+                continue
+            if parent is not None and _detect_maneuver(
+                parent, heading, twd, twa
+            ) != "none":
+                # Under lockout: lay, reverse-recovery, or held board into shore.
+                if not self._heading_fetches(node.pos, heading, tgt, radius_nm):
+                    reverse = abs(signed_diff(node.heading, brg_aim)) > 50.0
+                    recovering = abs(signed_diff(heading, brg_aim)) <= 50.0
+                    if not held_into_shore and not (reverse and recovering):
+                        continue
+            child, _geo = self._commit_heading(
+                node,
+                heading,
+                tgt,
+                max_commit_s=500.0,
+                tws0=tws,
+                twd0=twd,
+                arrive_nm=radius_nm,
+            )
+            if child is not None:
+                children.append(child)
+        if not children:
+            return []
+        children.sort(
+            key=lambda n: (
+                self._rem(n, tgt),
+                -(self.geo.depth.depth(n.pos) if self.geo.depth is not None else 0.0),
+            )
+        )
+        return children[:4]
 
     def _expand_leg(
         self,
@@ -925,13 +2128,17 @@ class IsochroneRouter:
         tgt = target.position
         origin = frontier[0].pos
         max_commit = self.p.max_commit_s
-        best_remaining = min(_remaining_nm(n, tgt) for n in frontier)
+        for n in frontier:
+            n.guide_idx = 0
+        self._begin_guidance(origin, tgt)
+        best_remaining = min(self._rem(n, tgt) for n in frontier)
         initial_remaining = best_remaining
         stall_limit = max(
             self.p.no_progress_steps,
             int(initial_remaining * self.p.stall_rem_factor) + self.p.stall_rem_offset,
         )
         stalled = 0
+        self._escapes_left = 6
         t_leg = time.perf_counter()
         n_wind = 0
         n_blocked = 0
@@ -957,7 +2164,7 @@ class IsochroneRouter:
         for _ in range(self.p.max_steps_per_leg):
             steps_taken += 1
             commit_now = max_commit
-            rem_now = min(_remaining_nm(n, tgt) for n in frontier)
+            rem_now = min(self._rem(n, tgt) for n in frontier)
             if rem_now < self.p.near_mark_nm:
                 commit_now = min(
                     commit_now,
@@ -965,7 +2172,7 @@ class IsochroneRouter:
                 )
 
             nxt, n_tried, n_geo_hit = self._expand_frontier(
-                frontier, tgt, commit_now
+                frontier, tgt, commit_now, target.radius_nm
             )
             n_wind += len(frontier)
             n_blocked += n_geo_hit
@@ -975,7 +2182,9 @@ class IsochroneRouter:
             if n_tried > 0 and n_geo_hit / n_tried > self.p.geo_hit_retry_fraction and nxt:
                 short = float(max(self.p.short_commit_min_s, self.p.time_step_s // 2))
                 if short < commit_now:
-                    nxt2, _, hit2 = self._expand_frontier(frontier, tgt, short)
+                    nxt2, _, hit2 = self._expand_frontier(
+                        frontier, tgt, short, target.radius_nm
+                    )
                     n_blocked += hit2
                     if len(nxt2) > len(nxt):
                         nxt = nxt2
@@ -994,16 +2203,29 @@ class IsochroneRouter:
             # Empty-frontier retry: same progressive-from-mark fan, shorter commit.
             if not nxt:
                 short = float(max(self.p.short_commit_min_s, self.p.time_step_s // 2))
-                nxt, _, hit_r = self._expand_frontier(frontier, tgt, short)
+                nxt, _, hit_r = self._expand_frontier(
+                    frontier, tgt, short, target.radius_nm
+                )
                 n_blocked += hit_r
                 n_expansions += len(nxt)
 
             if not nxt:
                 creep = float(max(self.p.creep_commit_min_s, self.p.time_step_s // 4))
-                nxt, _, hit_r = self._expand_frontier(frontier, tgt, creep)
+                nxt, _, hit_r = self._expand_frontier(
+                    frontier, tgt, creep, target.radius_nm
+                )
                 n_blocked += hit_r
                 n_expansions += len(nxt)
 
+            if not nxt and self._escapes_left > 0 and frontier:
+                lead = min(frontier, key=lambda n: self._rem(n, tgt))
+                if self._guide_blocked(lead, tgt):
+                    escaped = self._escape_frontier(frontier, tgt, target.radius_nm)
+                    if escaped:
+                        self._escapes_left -= 1
+                        frontier = escaped
+                        stalled = 0
+                        continue
             if not nxt:
                 # Wind cliff: nodes still have wind_at(t) but not enough horizon
                 # left to take a step — ask /route to extend the forecast.
@@ -1040,10 +2262,23 @@ class IsochroneRouter:
                 arrival = None
                 break
 
+            # A few hundredths of a mile outside the circle is already the finish.
+            # Tacking to clip the exact radius records a tack of a boat-length.
             arrivals = [
-                n for n in frontier if distance_nm(n.pos, tgt) <= target.radius_nm
+                n
+                for n in frontier
+                if distance_nm(n.pos, tgt) <= target.radius_nm + 0.03
             ]
             arrivals.extend(crossed)
+            # Near-mark stall: false depth holes (Fastnet Rock, Genoa breakwater)
+            # leave rem stuck at 1–2 nm. After real stalling, accept the closest
+            # boat inside half a mile rather than dying.
+            if not arrivals and stalled >= max(15, stall_limit // 4):
+                close = [
+                    n for n in frontier if distance_nm(n.pos, tgt) <= max(0.5, target.radius_nm + 0.25)
+                ]
+                if close:
+                    arrivals = close
             if arrivals:
                 best = min(arrivals, key=lambda n: n.t)
                 arrival = self._snap_to_mark(best, target)
@@ -1051,12 +2286,24 @@ class IsochroneRouter:
                 exhausted = False
                 break
 
-            rem = min(_remaining_nm(n, tgt) for n in frontier)
+            rem = min(self._rem(n, tgt) for n in frontier)
             if rem < best_remaining - 1e-4:
                 best_remaining = rem
                 stalled = 0
             else:
                 stalled += 1
+                lead = min(frontier, key=lambda n: self._rem(n, tgt))
+                if (
+                    stalled == stall_limit // 2
+                    and self._escapes_left > 0
+                    and self._guide_blocked(lead, tgt)
+                ):
+                    escaped = self._escape_frontier(frontier, tgt, target.radius_nm)
+                    if escaped:
+                        self._escapes_left -= 1
+                        frontier = escaped
+                        stalled = 0
+                        continue
                 if stalled >= stall_limit:
                     self._unreachable = True
                     termination = "no_progress"
@@ -1202,6 +2449,7 @@ class IsochroneRouter:
             last_arrival = start_node
             start_leg = 0
             self._leg_warnings = []
+            self._route_waypoints = []
             emit_start_first = True
 
         exhausted = False
@@ -1258,6 +2506,7 @@ class IsochroneRouter:
                 "depth": "region_depth.tif",
                 "land": "osm_land_chart",
             },
+            waypoints=list(self._route_waypoints) or None,
         )
 
     @staticmethod
@@ -1275,7 +2524,7 @@ class IsochroneRouter:
             legs.append(
                 RouteLeg(
                     t_utc=node.t,
-                    position=(round(node.lat, 5), round(node.lon, 5)),
+                    position=(node.lat, node.lon),
                     tws=round(node.tws, 2),
                     twd=round(node.twd, 1),
                     twa=round(node.twa, 1),

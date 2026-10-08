@@ -7,9 +7,15 @@ export interface OverlayToggles {
 
 export default function MapControls({
   toggles,
+  highDef = false,
+  highDefDisabled = false,
+  onHighDef,
   onChange,
 }: {
   toggles: OverlayToggles;
+  highDef?: boolean;
+  highDefDisabled?: boolean;
+  onHighDef?: (on: boolean) => void;
   onChange: (patch: Partial<OverlayToggles>) => void;
 }) {
   const btn = (active: boolean) =>
@@ -33,6 +39,21 @@ export default function MapControls({
       <button type="button" style={btn(toggles.showDepth)} onClick={() => onChange({ showDepth: !toggles.showDepth })}>
         Show depth
       </button>
+      {onHighDef && (
+        <button
+          type="button"
+          style={btn(highDef)}
+          disabled={highDefDisabled}
+          title={
+            highDefDisabled
+              ? "High def stays on during routing"
+              : "High def: WindNinja + ~200 m grid at fetch time. Off: ~500 m, no WindNinja. Zooming in interpolates — it does not fetch more detail."
+          }
+          onClick={() => onHighDef(!highDef)}
+        >
+          High def
+        </button>
+      )}
     </div>
   );
 }

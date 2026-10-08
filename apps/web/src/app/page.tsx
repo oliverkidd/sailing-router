@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BoatConfigPanel from "@/components/BoatConfigPanel";
 import CourseEditor, { type EditMode } from "@/components/CourseEditor";
+import LiveRacePanel, { useLivePosition } from "@/components/LiveRacePanel";
+import OfflinePack from "@/components/OfflinePack";
 import ForecastDropdown from "@/components/ForecastDropdown";
 import ForecastPicker from "@/components/ForecastPicker";
 import MapControls from "@/components/MapControls";
@@ -21,6 +23,7 @@ import TimeScrubber from "@/components/TimeScrubber";
 import WindLegend from "@/components/WindLegend";
 import ZoomDebugChip from "@/components/ZoomDebugChip";
 import { api } from "@/lib/api";
+import { pinChartCache } from "@/lib/deviceCache";
 import {
   clearStoredRouteSession,
   courseIsReady,
@@ -39,8 +42,8 @@ import {
 } from "@/lib/mapOverlays";
 import {
   bboxContains,
+  browseFetchZoom,
   regionCellKey,
-  regionNeedsDenserReplace,
   tierForZoom,
 } from "@/lib/windTiles";
 import {
@@ -123,6 +126,11 @@ export default function Home() {
   const [courseReadyToPersist, setCourseReadyToPersist] = useState(false);
   const [sessionHydrated, setSessionHydrated] = useState(false);
   const skipNextRouteClear = useRef(true);
+  const courseForRunRef = useRef(course);
+  const [live, setLive] = useState(false);
+  const [liveFollowNow, setLiveFollowNow] = useState(true);
+  const [nowUtc, setNowUtc] = useState(() => new Date().toISOString());
+  const { fix: liveFix, error: liveError } = useLivePosition(live);
   const [editMode, setEditMode] = useState<EditMode>("none");
   const [routes, setRoutes] = useState<ModelRoute[]>([]);
   const [running, setRunning] = useState(false);
@@ -135,7 +143,7 @@ export default function Home() {
   const [viewport, setViewport] = useState<MapBounds | null>(null);
   const [mapZoom, setMapZoom] = useState(5);
   /** Browse-only: WindNinja terrain downscaling (always on for routing). */
-  const [windNinjaOpt, setWindNinjaOpt] = useState(true);
+  const [windNinjaOpt, setWindNinjaOpt] = useState(false);
 
   const [activeModelId, setActiveModelId] = useState("");
   const [routeIndex, setRouteIndex] = useState(0);
@@ -246,6 +254,32 @@ export default function Home() {
     if (!activeRoute?.legs?.length) return null;
     return legAtTime(activeRoute.legs, overlayTimeUtc);
   }, [activeRoute, overlayTimeUtc]);
+
+  const planNow = useMemo(() => {
+    if (!live || !activeRoute?.legs?.length) return null;
+    return legAtTime(activeRoute.legs, nowUtc);
+  }, [live, activeRoute, nowUtc]);
+
+  useEffect(() => {
+    if (!live) return;
+    const tick = () => setNowUtc(new Date().toISOString());
+    tick();
+    const id = window.setInterval(tick, 5000);
+    return () => window.clearInterval(id);
+  }, [live]);
+
+  useEffect(() => {
+    if (!live || !liveFollowNow) return;
+    setOverlayTimeUtc(nowUtc);
+  }, [live, liveFollowNow, nowUtc]);
+
+  useEffect(() => {
+    if (!live || !liveFix) return;
+    setCourse((current) => {
+      if (isPointSet(current.start)) return current;
+      return { ...current, start: liveFix.position };
+    });
+  }, [live, liveFix]);
 
   const playbackPosition = boatAtTime?.position ?? null;
   const playbackHeading = boatAtTime?.heading ?? null;
@@ -386,6 +420,7 @@ export default function Home() {
       // Send raw viewport — server pads once and returns the display window.
       const reqBounds = viewportBounds;
       const useTerrain = terrain ?? windNinjaOpt;
+      const z = zoom ?? browseFetchZoom(useTerrain);
       setStatus(modelId, "fetching");
       if (modelId === activeModelId) setOverlayMsg(null);
 
@@ -404,17 +439,16 @@ export default function Home() {
               setWindSteps((prev) => applyWindEvent(prev, event));
             },
             ac.signal,
-            zoom,
+            z,
             useTerrain,
           )
-        : fetchWindArea(reqBounds, modelId, hour, endHour, ac.signal, zoom, useTerrain);
+        : fetchWindArea(reqBounds, modelId, hour, endHour, ac.signal, z, useTerrain);
 
       fetchPromise
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
-            const seriesTier =
-              series.zoom_tier ?? tierForZoom(zoom ?? mapZoom);
+            const seriesTier = series.zoom_tier ?? tierForZoom(z);
             setBrowseCache((prev) => {
               const existing = prev[modelId];
               const merged =
@@ -460,7 +494,7 @@ export default function Home() {
           }
         });
     },
-    [activeModelId, setStatus, windNinjaOpt, mapZoom],
+    [activeModelId, setStatus, windNinjaOpt],
   );
 
   const prefetchBrowseRange = useCallback(
@@ -480,9 +514,10 @@ export default function Home() {
       const gap = missingRange(entry?.series, start, end);
       if (!gap) return;
 
-      const reqBounds = viewportBounds;
-      const z = zoom ?? mapZoom;
       const useTerrain = terrain ?? windNinjaOpt;
+      const z = zoom ?? browseFetchZoom(useTerrain);
+      const cached = browseCacheRef.current[modelId];
+      const reqBounds = cached?.region ?? viewportBounds;
       const key = `${gap.start}|${gap.end}|${reqBounds.lat_min},${reqBounds.lon_min},${reqBounds.lat_max},${reqBounds.lon_max}|${z}|t=${useTerrain ? 1 : 0}`;
       if (prefetchKeyRef.current.get(modelId) === key) return;
 
@@ -527,7 +562,7 @@ export default function Home() {
           }
         });
     },
-    [mapZoom, windNinjaOpt],
+    [windNinjaOpt],
   );
 
   const scheduleBrowseWindow = useCallback(
@@ -542,14 +577,10 @@ export default function Home() {
     ) => {
       const focus = floorHourIso(focusUtc);
       const entry = browseCacheRef.current[modelId];
-      const z = zoom ?? mapZoom;
       const useTerrain = terrain ?? windNinjaOpt;
+      const z = zoom ?? browseFetchZoom(useTerrain);
       const inRegion = !!(entry && bboxContains(entry.region, viewportBounds, 0.05));
-      // Density replace only when the current zoom needs a finer tier than cached.
-      const denserNeeded = !!(
-        entry && regionNeedsDenserReplace(entry.tier, z)
-      );
-      const merge = inRegion && !opts?.forceReplace && !denserNeeded;
+      const merge = inRegion && !opts?.forceReplace;
       // First fetch already covers focus..(focus+PREFETCH_WINDOW_H-1).
       const needFocus = !merge || !entry || !seriesCoversHour(entry.series, focus);
 
@@ -569,7 +600,7 @@ export default function Home() {
         }
         fetchBrowseFocus(
           modelId,
-          viewportBounds,
+          merge && entry ? entry.region : viewportBounds,
           focus,
           merge,
           merge ? undefined : kickPrefetch,
@@ -581,7 +612,32 @@ export default function Home() {
         kickPrefetch();
       }
     },
-    [fetchBrowseFocus, prefetchBrowseRange, mapZoom, windNinjaOpt],
+    [fetchBrowseFocus, prefetchBrowseRange, windNinjaOpt],
+  );
+
+  const applyHighDef = useCallback(
+    (on: boolean) => {
+      setWindNinjaOpt(on);
+      if (inRouteReview) return;
+      if (activeModelId) {
+        browseAbortRefs.current.get(activeModelId)?.abort();
+        prefetchAbortRefs.current.get(activeModelId)?.abort();
+        prefetchKeyRef.current.delete(activeModelId);
+        const next = { ...browseCacheRef.current };
+        delete next[activeModelId];
+        browseCacheRef.current = next;
+        setBrowseCache(next);
+        setStatus(activeModelId, "fetching");
+      } else {
+        browseCacheRef.current = {};
+        setBrowseCache({});
+      }
+    },
+    [
+      inRouteReview,
+      activeModelId,
+      setStatus,
+    ],
   );
 
   // Load route-window series into routeCache per route model (silent; no overlay).
@@ -634,19 +690,21 @@ export default function Home() {
       const id = activeModelId;
       const focus = floorHourIso(overlayTimeUtc);
       const entry = browseCacheRef.current[id];
+      const fetchZoom = browseFetchZoom(windNinjaOpt);
       const inRegion = !!(entry && bboxContains(entry.region, viewport, 0.05));
-      const denserNeeded = !!(entry && regionNeedsDenserReplace(entry.tier, mapZoom));
-      if (inRegion && !denserNeeded && entry && seriesCoversHour(entry.series, focus)) {
+      const covers = !!(entry && seriesCoversHour(entry.series, focus));
+      const skipFetch = inRegion && covers;
+      if (skipFetch) {
         const aheadEnd = capHour(hoursAheadIso(focus, PREFETCH_WINDOW_H - 1), horizonEndUtc);
         const prefetchStart = hoursAheadIso(focus, 1);
         if (new Date(prefetchStart).getTime() <= new Date(aheadEnd).getTime()) {
-          prefetchBrowseRange(id, viewport, prefetchStart, aheadEnd, mapZoom);
+          prefetchBrowseRange(id, viewport, prefetchStart, aheadEnd, fetchZoom);
         }
         return;
       }
       scheduleBrowseWindow(id, viewport, focus, horizonEndUtc, {
-        forceReplace: !inRegion || denserNeeded,
-      }, mapZoom);
+        forceReplace: !inRegion,
+      }, fetchZoom);
     }, 250);
 
     return () => clearTimeout(t);
@@ -670,7 +728,9 @@ export default function Home() {
     if (routes.length > 0 || routeModal !== "hidden") return;
     if (!viewport || !activeModelId || apiUp !== true) return;
     const entry = browseCache[activeModelId];
-    if (!entry || !bboxContains(entry.region, viewport, 0.05)) return;
+    if (!entry) return;
+    const inRegion = bboxContains(entry.region, viewport, 0.05);
+    if (!inRegion) return;
 
     const focus = floorHourIso(overlayTimeUtc);
     const runMax = contiguousRunMax(entry.series, focus);
@@ -681,12 +741,18 @@ export default function Home() {
     const extendStart = hoursAheadIso(runMax, 1);
     const extendEnd = capHour(hoursAheadIso(runMax, PREFETCH_WINDOW_H), horizonEndUtc);
     if (new Date(extendStart).getTime() > new Date(extendEnd).getTime()) return;
-    prefetchBrowseRange(activeModelId, viewport, extendStart, extendEnd, mapZoom);
+    prefetchBrowseRange(
+      activeModelId,
+      viewport,
+      extendStart,
+      extendEnd,
+      browseFetchZoom(windNinjaOpt),
+    );
   }, [
     overlayTimeUtc,
     browseCache,
     viewport,
-    mapZoom,
+    windNinjaOpt,
     activeModelId,
     apiUp,
     routes.length,
@@ -848,10 +914,13 @@ export default function Home() {
     setRoutes(okRoutes);
     setActiveModelId(okRoutes[0].model_id);
     setRouteIndex(0);
-    setOverlayTimeUtc(course.depart_utc);
-    setHorizonStartUtc(course.depart_utc);
+    setOverlayTimeUtc(courseForRunRef.current.depart_utc);
+    setHorizonStartUtc(courseForRunRef.current.depart_utc);
     setShowWind(true);
     setFitRouteKey(`${Date.now()}-${okRoutes.length}`);
+    pinChartCache().catch(() => {
+      /* The route is already in localStorage if the chart cache is unavailable. */
+    });
     if (warnings.length > 0) {
       setPrepState("warning");
       setRunMsg(warnings[0]);
@@ -890,14 +959,23 @@ export default function Home() {
     setDetailOpen(false);
   };
 
-  const runRoute = async () => {
+  const runRoute = async (courseOverride?: Course) => {
+    // onClick handlers pass a MouseEvent if wired as onClick={runRoute}; only a
+    // real Course override (e.g. live reroute) may replace the editor course.
+    const courseForRun =
+      courseOverride &&
+      Array.isArray(courseOverride.start) &&
+      Array.isArray(courseOverride.finish)
+        ? courseOverride
+        : course;
+    courseForRunRef.current = courseForRun;
     const modelIds = Array.from(selected);
     if (!boat.polar_id) {
       setPrepState("error");
       setRunMsg("Load a polar first.");
       return;
     }
-    if (!courseIsReady(course)) {
+    if (!courseIsReady(courseForRun)) {
       setPrepState("error");
       setRunMsg("Set start and finish on the map first.");
       return;
@@ -918,12 +996,12 @@ export default function Home() {
     setRetryableModelIds([]);
     pendingRoutesRef.current = [];
     routeRunModelIdsRef.current = modelIds;
-    setRouteSteps(initialRouteSteps(modelIds, course));
+    setRouteSteps(initialRouteSteps(modelIds, courseForRun));
     try {
       const warningsAcc: string[] = [];
       const res = await api.routeStream(
         {
-          course,
+          course: courseForRun,
           boat,
           model_ids: modelIds,
           time_step_s: 300,
@@ -1210,7 +1288,9 @@ export default function Home() {
             running={running || routeModal === "error"}
             prepState={prepState}
             message={routeModal === "hidden" ? runMsg || undefined : undefined}
-            onRun={runRoute}
+            onRun={() => {
+              void runRoute();
+            }}
           />
         </div>
       </aside>
@@ -1225,6 +1305,10 @@ export default function Home() {
           windSeries={windSeries}
           playbackPosition={playbackPosition}
           playbackHeading={playbackHeading}
+          livePosition={live && liveFix ? liveFix.position : null}
+          liveHeading={liveFix?.headingDeg ?? null}
+          planPosition={live && planNow ? planNow.position : null}
+          planHeading={live && planNow ? planNow.heading : null}
           fitRouteKey={fitRouteKey}
           editMode={editMode}
           onMapClick={editMode === "none" ? undefined : handleMapClick}
@@ -1259,9 +1343,52 @@ export default function Home() {
             onActiveModel={setActiveModelId}
           />
         )}
+        <div className="map-corner-stack">
+        <OfflinePack course={course} canDownload={courseIsReady(course)} />
+        <LiveRacePanel
+          enabled={live}
+          onToggle={() => {
+            setLive((on) => {
+              const next = !on;
+              if (next) setLiveFollowNow(true);
+              return next;
+            });
+          }}
+          followNow={liveFollowNow}
+          onFollowNow={() => {
+            setLiveFollowNow(true);
+            setNowUtc(new Date().toISOString());
+          }}
+          fix={liveFix}
+          error={liveError}
+          legs={activeRoute?.legs ?? null}
+          departUtc={course.depart_utc}
+          nowUtc={nowUtc}
+          canReroute={Boolean(liveFix) && isPointSet(course.finish) && !running}
+          onUseAsStart={() => {
+            if (!liveFix) return;
+            setCourse((current) => ({ ...current, start: liveFix.position }));
+          }}
+          onReroute={() => {
+            if (!liveFix || !isPointSet(course.finish)) return;
+            const next: Course = {
+              ...course,
+              start: liveFix.position,
+              depart_utc: new Date().toISOString(),
+            };
+            setCourse(next);
+            setLiveFollowNow(true);
+            setNowUtc(next.depart_utc);
+            void runRoute(next);
+          }}
+        />
+        </div>
         <TimeScrubber
           overlayTimeUtc={overlayTimeUtc}
-          onTime={setOverlayTimeUtc}
+          onTime={(t) => {
+            setLiveFollowNow(false);
+            setOverlayTimeUtc(t);
+          }}
           horizonStartUtc={horizonStartUtc}
           horizonEndUtc={inRouteReview ? routeHorizonEndUtc : horizonEndUtc}
           loading={windLoading && !inRouteReview}
@@ -1282,7 +1409,9 @@ export default function Home() {
           routeError={routeModal === "error"}
           retryableModelIds={retryableModelIds}
           completedRoutes={routeModal === "done" ? routes : undefined}
-          onRetry={runRoute}
+          onRetry={() => {
+            void runRoute();
+          }}
           onRetryModel={retryModel}
           onEdit={dismissRouteModal}
           onView={acknowledgeRouteResults}
@@ -1290,6 +1419,9 @@ export default function Home() {
         {activeError && <div className="map-error-banner">{activeError}</div>}
         <MapControls
           toggles={{ showWind, showDepth }}
+          highDef={windNinjaOpt}
+          highDefDisabled={inRouteReview}
+          onHighDef={applyHighDef}
           onChange={(patch) => {
             if (patch.showWind !== undefined) setShowWind(patch.showWind);
             if (patch.showDepth !== undefined) setShowDepth(patch.showDepth);
@@ -1297,39 +1429,13 @@ export default function Home() {
         />
         <ZoomDebugChip
           zoom={mapZoom}
+          forecastZoom={browseFetchZoom(windNinjaOpt)}
           terrainOn={windNinjaOpt}
           terrainDisabled={inRouteReview}
           terrainLibrary={windSeries?.terrain_library ?? null}
           terrainApplied={windSeries?.terrain_applied ?? null}
           terrainLibraryVersion={windSeries?.terrain_library_version ?? null}
-          onTerrainToggle={(on) => {
-            setWindNinjaOpt(on);
-            if (inRouteReview) return;
-            // Bust browse cache so the next fetch reflects the new setting.
-            if (activeModelId) {
-              browseAbortRefs.current.get(activeModelId)?.abort();
-              prefetchAbortRefs.current.get(activeModelId)?.abort();
-              prefetchKeyRef.current.delete(activeModelId);
-              setBrowseCache((prev) => {
-                const next = { ...prev };
-                delete next[activeModelId];
-                return next;
-              });
-            } else {
-              setBrowseCache({});
-            }
-            if (viewport && activeModelId && apiUp === true) {
-              scheduleBrowseWindow(
-                activeModelId,
-                viewport,
-                overlayTimeUtc,
-                horizonEndUtc,
-                { forceReplace: true },
-                mapZoom,
-                on,
-              );
-            }
-          }}
+          onTerrainToggle={applyHighDef}
         />
         <WindLegend visible={showWind && !!windSeries} />
         {inRouteReview ? (

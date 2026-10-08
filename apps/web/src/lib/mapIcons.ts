@@ -9,7 +9,7 @@ export const BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="60" heig
 
 /** North-pointing wind arrow (rotate via icon-rotate = flow-toward bearing). */
 export const WIND_ARROW_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <path fill="#ffffff" stroke="#0b1220" stroke-width="1.1" stroke-linejoin="round"
+  <path fill="#ffffff" stroke="#64748b" stroke-width="1.5" stroke-linejoin="round"
     d="M24 1 L30 16 L27 16 L27 46 L21 46 L21 16 L18 16 Z"/>
 </svg>`;
 

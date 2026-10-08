@@ -319,17 +319,19 @@ def ensure_geo_context(course: Course, margin_deg: float | None = None) -> GeoCo
     """Build GeoContext for a course using the same margin as prepare/route wind."""
     import time  # noqa: PLC0415
 
-    from . import COURSE_WIND_MARGIN_DEG  # noqa: PLC0415
+    from . import COURSE_WIND_MARGIN_DEG, effective_course_margin_deg  # noqa: PLC0415
 
-    margin = COURSE_WIND_MARGIN_DEG if margin_deg is None else margin_deg
+    requested = COURSE_WIND_MARGIN_DEG if margin_deg is None else margin_deg
+    margin = effective_course_margin_deg(course, requested)
     t0 = time.perf_counter()
-    bbox = course_bbox(course, margin_deg=margin)
+    bbox = course_bbox(course, margin_deg=requested)
     land = fetch_land_for_bbox(bbox)
     depth = fetch_depth_for_bbox(bbox, land)
     logger.info(
-        "geo context key=%s margin=%.1f total_ms=%.0f",
+        "geo context key=%s margin=%.1f (requested=%.1f) total_ms=%.0f",
         bbox.key(),
         margin,
+        requested,
         (time.perf_counter() - t0) * 1000,
     )
     return GeoContext.build(

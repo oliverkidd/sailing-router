@@ -4,6 +4,8 @@ import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import { chartPmtilesUrl } from "@/lib/chartUrls";
+import { installDeviceCache } from "@/lib/deviceCache";
 import {
   boundsFromMap,
   courseIsReady,
@@ -19,7 +21,8 @@ import {
 } from "@/lib/windArrows";
 import {
   WindFlowLayer,
-  WIND_FLOW_PARTICLE_LAYER_ID,
+  WIND_FLOW_ARROW_LAYER_ID,
+  WIND_FLOW_TAIL_HALO_LAYER_ID,
   WIND_FLOW_TAIL_LAYER_ID,
 } from "@/lib/windFlowLayer";
 import { colorForModel } from "@/lib/colors";
@@ -30,14 +33,12 @@ import { viewportMaxSpanMiles } from "@/lib/windTiles";
 import type { Course, ModelRoute } from "@/lib/types";
 import type { EditMode } from "@/components/CourseEditor";
 import {
-  DEM_COVERAGE_LAYER_ID,
-  DEM_COVERAGE_SOURCE_ID,
   TERRAIN_EXAGGERATION,
-  TERRAIN_HILLSHADE_ID,
   TERRAIN_MESH_MIN_ZOOM,
+  TERRAIN_SHADE_LAYER_ID,
   TERRAIN_SOURCE_ID,
+  attachTerrainLayers,
   fetchTerrainTileMeta,
-  footprintsToFeatureCollection,
   viewportIntersectsAnyDem,
   type DemBounds,
 } from "@/lib/terrainMap";
@@ -65,6 +66,7 @@ function courseCursorCss(mode: EditMode): string {
 let pmtilesRegistered = false;
 export function ensurePmtilesProtocol() {
   if (pmtilesRegistered) return;
+  installDeviceCache();
   const protocol = new Protocol();
   // MapLibre 5 wants a Promise loader; pmtiles.tilev4 is that shape.
   maplibregl.addProtocol("pmtiles", (params, abortController) =>
@@ -74,8 +76,6 @@ export function ensurePmtilesProtocol() {
 }
 
 /** Dark nautical chart — land + depth isobaths from local PMTiles (no runtime fetch). */
-/** Bump when coastline.pmtiles / depth.pmtiles are rebuilt so browsers skip stale Range caches. */
-const CHART_TILE_VERSION = "20260718full";
 
 /** Land fill (grey) + a darker stroke for a clean coastline outline. */
 const LAND_FILL_COLOR = "#c8c8c8";
@@ -160,9 +160,9 @@ const DEPTH_LABEL_PAINT: maplibregl.SymbolLayerSpecification["paint"] = {
   "text-opacity": DEPTH_TEXT_OPACITY,
 };
 
-export function buildChartStyle(origin: string): maplibregl.StyleSpecification {
-  const coastUrl = `pmtiles://${origin}/geo/coastline.pmtiles?v=${CHART_TILE_VERSION}`;
-  const depthUrl = `pmtiles://${origin}/geo/depth.pmtiles?v=${CHART_TILE_VERSION}`;
+export function buildChartStyle(_origin?: string): maplibregl.StyleSpecification {
+  const coastUrl = chartPmtilesUrl("coastline.pmtiles");
+  const depthUrl = chartPmtilesUrl("depth.pmtiles");
 
   return {
     version: 8,
@@ -178,6 +178,49 @@ export function buildChartStyle(origin: string): maplibregl.StyleSpecification {
         type: "background",
         paint: { "background-color": "#ffffff" },
       },
+      {
+        id: "land-fill",
+        type: "fill",
+        source: "coastline",
+        "source-layer": "land",
+        paint: {
+          "fill-color": LAND_FILL_COLOR,
+          "fill-opacity": 1,
+        },
+      },
+      // OSM split cells leave ~150 m gaps; paint those cuts in the land colour.
+      {
+        id: "land-seams",
+        type: "line",
+        source: "coastline",
+        "source-layer": "land_seams",
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": LAND_FILL_COLOR,
+          "line-opacity": 1,
+          "line-width": [
+            "interpolate",
+            ["exponential", 2],
+            ["zoom"],
+            5,
+            0.8,
+            8,
+            1.6,
+            10,
+            3.2,
+            12,
+            8,
+            14,
+            24,
+          ],
+        },
+      },
+      // Baked hillshade is inserted before water-fill at runtime. A
+      // second land-cover above the depth bands keeps islands opaque once
+      // the 0–5 m fills turn on at z9.
       {
         id: "depth-fill",
         type: "fill",
@@ -203,16 +246,6 @@ export function buildChartStyle(origin: string): maplibregl.StyleSpecification {
         layout: DEPTH_LABEL_LAYOUT,
         paint: DEPTH_LABEL_PAINT,
       },
-      {
-        id: "land-fill",
-        type: "fill",
-        source: "coastline",
-        "source-layer": "land",
-        paint: {
-          "fill-color": LAND_FILL_COLOR,
-          "fill-opacity": 1,
-        },
-      },
       // Estuaries / riverbanks / harbour basins — shallow blue when no bathymetry.
       {
         id: "water-fill",
@@ -224,7 +257,7 @@ export function buildChartStyle(origin: string): maplibregl.StyleSpecification {
           "fill-opacity": 1,
         },
       },
-      // Clean land outline (darker than fill); split-grid seams removed at build time.
+      // Shore outline from the same tiles as land-fill (split-grid cuts live in land_seams).
       {
         id: "coastline",
         type: "line",
@@ -499,6 +532,10 @@ export default function MapView({
   windSeries = null,
   playbackPosition = null,
   playbackHeading = null,
+  livePosition = null,
+  liveHeading = null,
+  planPosition = null,
+  planHeading = null,
   fitRouteKey,
   editMode = "none",
   showDepth = true,
@@ -517,6 +554,12 @@ export default function MapView({
   windSeries?: WindSeries | null;
   playbackPosition?: [number, number] | null;
   playbackHeading?: number | null;
+  /** GPS fix. Drawn as the "you" marker when live mode is on. */
+  livePosition?: [number, number] | null;
+  liveHeading?: number | null;
+  /** Planned boat at the current clock, when it is not already the playback boat. */
+  planPosition?: [number, number] | null;
+  planHeading?: number | null;
   fitRouteKey?: string;
   editMode?: EditMode;
   showDepth?: boolean;
@@ -556,9 +599,10 @@ export default function MapView({
   const applyWindVizRef = useRef<(() => void) | null>(null);
   const windGridRef = useRef<MeteoGrid | null>(null);
   const windDataRef = useRef(false);
-  const demFootprintsRef = useRef<DemBounds[]>([]);
   const terrainTilesReadyRef = useRef(false);
   const terrainTileBoundsRef = useRef<DemBounds | null>(null);
+
+  const flewToLiveRef = useRef(false);
 
   const propsRef = useRef({
     routes,
@@ -569,6 +613,10 @@ export default function MapView({
     windSeries,
     playbackPosition,
     playbackHeading,
+    livePosition,
+    liveHeading,
+    planPosition,
+    planHeading,
   });
 
   propsRef.current = {
@@ -580,6 +628,10 @@ export default function MapView({
     windSeries,
     playbackPosition,
     playbackHeading,
+    livePosition,
+    liveHeading,
+    planPosition,
+    planHeading,
   };
   onRouteSelectRef.current = onRouteSelect;
   onRouteSeekRef.current = onRouteSeek;
@@ -656,6 +708,14 @@ export default function MapView({
 
     map.on("load", async () => {
       loadedRef.current = true;
+      const firstLive = propsRef.current.livePosition;
+      if (firstLive && !flewToLiveRef.current) {
+        flewToLiveRef.current = true;
+        map.flyTo({
+          center: [firstLive[1], firstLive[0]],
+          zoom: Math.max(map.getZoom(), 11),
+        });
+      }
       const empty = { type: "FeatureCollection" as const, features: [] };
 
       // Depth → land → wind → routes (forecast above chart, under route overlays)
@@ -663,63 +723,13 @@ export default function MapView({
 
       try {
         const arrowImg = await svgToImage(WIND_ARROW_SVG, 48);
-        if (!map.hasImage(WIND_ARROW_ICON_ID)) {
-          map.addImage(WIND_ARROW_ICON_ID, arrowImg, { pixelRatio: 2 });
-        }
+        if (map.hasImage(WIND_ARROW_ICON_ID)) map.removeImage(WIND_ARROW_ICON_ID);
+        map.addImage(WIND_ARROW_ICON_ID, arrowImg, { pixelRatio: 2 });
       } catch (e) {
         console.warn("[map] wind arrow icon failed to load", e);
       }
       windFlow.attach(map);
       windArrows.attach(map);
-
-      // DEM footprint outlines (all open mosaics) + optional Terrain-RGB / hillshade.
-      map.addSource(DEM_COVERAGE_SOURCE_ID, { type: "geojson", data: empty });
-      map.addLayer({
-        id: DEM_COVERAGE_LAYER_ID,
-        type: "line",
-        source: DEM_COVERAGE_SOURCE_ID,
-        paint: {
-          "line-color": "#b45309",
-          "line-width": 1.5,
-          "line-dasharray": [2, 2],
-          "line-opacity": 0.55,
-        },
-      });
-
-      try {
-        const cov = await api.demCoverage();
-        demFootprintsRef.current = cov.footprints;
-        (map.getSource(DEM_COVERAGE_SOURCE_ID) as maplibregl.GeoJSONSource).setData(
-          footprintsToFeatureCollection(cov.footprints),
-        );
-      } catch {
-        /* API offline — try static build artifact */
-        try {
-          const res = await fetch(`${window.location.origin}/geo/dem_coverage.geojson`);
-          if (res.ok) {
-            const fc = (await res.json()) as GeoJSON.FeatureCollection;
-            (map.getSource(DEM_COVERAGE_SOURCE_ID) as maplibregl.GeoJSONSource).setData(fc);
-            demFootprintsRef.current = fc.features
-              .map((f) => {
-                const g = f.geometry;
-                if (g.type !== "Polygon") return null;
-                const ring = g.coordinates[0];
-                const lons = ring.map((c) => c[0]);
-                const lats = ring.map((c) => c[1]);
-                return {
-                  lon_min: Math.min(...lons),
-                  lat_min: Math.min(...lats),
-                  lon_max: Math.max(...lons),
-                  lat_max: Math.max(...lats),
-                  name: String(f.properties?.name ?? "dem"),
-                };
-              })
-              .filter((x): x is DemBounds & { name: string } => x != null);
-          }
-        } catch {
-          /* no DEM coverage overlay */
-        }
-      }
 
       const terrainMeta = await fetchTerrainTileMeta(window.location.origin);
       if (terrainMeta) {
@@ -730,39 +740,35 @@ export default function MapView({
           lon_max: terrainMeta.bounds[2],
           lat_max: terrainMeta.bounds[3],
         };
-        const tilesUrl = `${window.location.origin}/geo/terrain/{z}/{x}/{y}.png`;
-        if (!map.getSource(TERRAIN_SOURCE_ID)) {
-          map.addSource(TERRAIN_SOURCE_ID, {
-            type: "raster-dem",
-            tiles: [tilesUrl],
-            tileSize: 256,
-            minzoom: terrainMeta.minzoom,
-            maxzoom: terrainMeta.maxzoom,
-            encoding: "mapbox",
-            bounds: terrainMeta.bounds,
-          });
-        }
-        if (!map.getLayer(TERRAIN_HILLSHADE_ID)) {
-          // Under land labels / wind — after land-fill so cliffs read on land.
-          const beforeId = map.getLayer("coastline") ? "coastline" : undefined;
-          map.addLayer(
-            {
-              id: TERRAIN_HILLSHADE_ID,
-              type: "hillshade",
-              source: TERRAIN_SOURCE_ID,
-              minzoom: terrainMeta.minzoom,
-              paint: {
-                "hillshade-exaggeration": 0.45,
-                "hillshade-shadow-color": "#1e293b",
-                "hillshade-highlight-color": "#f8fafc",
-                "hillshade-accent-color": "#64748b",
-                "hillshade-illumination-direction": 315,
-                "hillshade-illumination-anchor": "viewport",
-              },
+        attachTerrainLayers(map, window.location.origin, terrainMeta);
+      }
+      // Cover OSM land again so depth bands cannot show through islands, then
+      // put baked hillshade on top of that fill (under water / rivers).
+      const beforeWater = map.getLayer("water-fill")
+        ? "water-fill"
+        : map.getLayer("coastline")
+          ? "coastline"
+          : undefined;
+      if (!map.getLayer("land-cover")) {
+        map.addLayer(
+          {
+            id: "land-cover",
+            type: "fill",
+            source: "coastline",
+            "source-layer": "land",
+            paint: {
+              "fill-color": LAND_FILL_COLOR,
+              "fill-opacity": 1,
             },
-            beforeId,
-          );
-        }
+          },
+          beforeWater,
+        );
+      }
+      if (map.getLayer("land-seams") && beforeWater) {
+        map.moveLayer("land-seams", beforeWater);
+      }
+      if (map.getLayer(TERRAIN_SHADE_LAYER_ID) && beforeWater) {
+        map.moveLayer(TERRAIN_SHADE_LAYER_ID, beforeWater);
       }
 
       map.addSource("routes", { type: "geojson", data: routesToFeatureCollection([]) });
@@ -854,6 +860,56 @@ export default function MapView({
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
+        },
+      });
+
+      map.addSource("live-link", { type: "geojson", data: empty });
+      map.addLayer({
+        id: "live-link",
+        source: "live-link",
+        type: "line",
+        paint: {
+          "line-color": "#22d3ee",
+          "line-width": 1.5,
+          "line-dasharray": [2, 2],
+          "line-opacity": 0.9,
+        },
+      });
+      map.addSource("live-plan", { type: "geojson", data: empty });
+      map.addLayer({
+        id: "live-plan",
+        source: "live-plan",
+        type: "symbol",
+        layout: {
+          "icon-image": "boat",
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 5, 0.35, 10, 0.75, 14, 1],
+          "icon-rotate": ["get", "heading_deg"],
+          "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+        paint: { "icon-opacity": 0.45 },
+      });
+      map.addSource("live-you", { type: "geojson", data: empty });
+      map.addLayer({
+        id: "live-you-halo",
+        source: "live-you",
+        type: "circle",
+        paint: {
+          "circle-radius": 11,
+          "circle-color": "#22d3ee",
+          "circle-opacity": 0.35,
+        },
+      });
+      map.addLayer({
+        id: "live-you",
+        source: "live-you",
+        type: "circle",
+        paint: {
+          "circle-radius": 6,
+          "circle-color": "#22d3ee",
+          "circle-stroke-color": "#f8fafc",
+          "circle-stroke-width": 2,
         },
       });
 
@@ -969,12 +1025,23 @@ export default function MapView({
         map.getCanvas().style.cursor = courseCursorCss(editModeRef.current);
       });
 
-      // Wind under place labels under routes.
+      // Heatmap with the land stack so 3D terrain drape rides the mesh; flow/arrows under routes.
       try {
-        if (map.getLayer("wind-heatmap-canvas") && map.getLayer("routes")) {
-          map.moveLayer("wind-heatmap-canvas", "routes");
+        const heatBefore = map.getLayer("coastline")
+          ? "coastline"
+          : map.getLayer("roads")
+            ? "roads"
+            : map.getLayer("routes")
+              ? "routes"
+              : undefined;
+        if (map.getLayer("wind-heatmap-canvas") && heatBefore) {
+          map.moveLayer("wind-heatmap-canvas", heatBefore);
         }
-        for (const id of [WIND_FLOW_TAIL_LAYER_ID, WIND_FLOW_PARTICLE_LAYER_ID]) {
+        for (const id of [
+          WIND_FLOW_TAIL_HALO_LAYER_ID,
+          WIND_FLOW_TAIL_LAYER_ID,
+          WIND_FLOW_ARROW_LAYER_ID,
+        ]) {
           if (map.getLayer(id) && map.getLayer("routes")) map.moveLayer(id, "routes");
         }
         if (map.getLayer("wind-arrows") && map.getLayer("routes")) {
@@ -1020,6 +1087,11 @@ export default function MapView({
       debouncedEmitViewport();
       syncTerrainAndWind();
     });
+    map.on("sourcedata", (e) => {
+      if (e.sourceId === TERRAIN_SOURCE_ID && e.sourceDataType === "idle") {
+        syncTerrainAndWind(true);
+      }
+    });
     map.on("pitchend", () => {
       applyRotationGate();
       syncTerrainAndWind();
@@ -1028,6 +1100,11 @@ export default function MapView({
 
     map.on("click", async (e) => {
       if (dragPointRef.current != null) return;
+      // Placing start/finish/marks always wins over route or mark hit-tests.
+      if (editModeRef.current !== "none" && onMapClickRef.current) {
+        onMapClickRef.current(e.lngLat.lat, e.lngLat.lng);
+        return;
+      }
       const markHit = map.queryRenderedFeatures(e.point, { layers: ["course-marks"] });
       if (
         markHit.some(
@@ -1035,8 +1112,7 @@ export default function MapView({
             f.properties?.kind === "mark" ||
             f.properties?.kind === "start" ||
             f.properties?.kind === "finish",
-        ) &&
-        editModeRef.current === "none"
+        )
       ) {
         return;
       }
@@ -1088,7 +1164,7 @@ export default function MapView({
       onViewportChangeRef.current?.(bbox, span, m.getZoom());
     }
 
-    function syncTerrainAndWind() {
+    function syncTerrainAndWind(forceMesh = false) {
       const m = mapRef.current;
       if (!m || !loadedRef.current) return;
 
@@ -1114,7 +1190,7 @@ export default function MapView({
           overTerrainTiles &&
           m.getPitch() > MESH_PITCH_MIN_DEG;
         const hasTerrain = m.getTerrain() != null;
-        if (wantMesh && !hasTerrain) {
+        if (wantMesh && (!hasTerrain || forceMesh)) {
           m.setTerrain({
             source: TERRAIN_SOURCE_ID,
             exaggeration: TERRAIN_EXAGGERATION,
@@ -1123,9 +1199,10 @@ export default function MapView({
           m.setTerrain(null);
         }
         draped = wantMesh;
-        if (m.getLayer(TERRAIN_HILLSHADE_ID)) {
+        // Relief raster stays on in 2D and draped on the mesh in 3D.
+        if (m.getLayer(TERRAIN_SHADE_LAYER_ID)) {
           m.setLayoutProperty(
-            TERRAIN_HILLSHADE_ID,
+            TERRAIN_SHADE_LAYER_ID,
             "visibility",
             overTerrainTiles ? "visible" : "none",
           );
@@ -1183,6 +1260,38 @@ export default function MapView({
       (m.getSource("playback-boat") as maplibregl.GeoJSONSource | undefined)?.setData(
         boatFeature(p.playbackPosition, p.playbackHeading),
       );
+      (m.getSource("live-you") as maplibregl.GeoJSONSource | undefined)?.setData(
+        boatFeature(p.livePosition, p.liveHeading),
+      );
+      const planOnPlayback =
+        p.planPosition != null &&
+        p.playbackPosition != null &&
+        Math.abs(p.planPosition[0] - p.playbackPosition[0]) < 1e-5 &&
+        Math.abs(p.planPosition[1] - p.playbackPosition[1]) < 1e-5;
+      const noFeatures = { type: "FeatureCollection" as const, features: [] };
+      (m.getSource("live-plan") as maplibregl.GeoJSONSource | undefined)?.setData(
+        planOnPlayback ? noFeatures : boatFeature(p.planPosition, p.planHeading),
+      );
+      const link =
+        p.livePosition && p.planPosition
+          ? {
+              type: "FeatureCollection" as const,
+              features: [
+                {
+                  type: "Feature" as const,
+                  properties: {},
+                  geometry: {
+                    type: "LineString" as const,
+                    coordinates: [
+                      [p.livePosition[1], p.livePosition[0]],
+                      [p.planPosition[1], p.planPosition[0]],
+                    ],
+                  },
+                },
+              ],
+            }
+          : noFeatures;
+      (m.getSource("live-link") as maplibregl.GeoJSONSource | undefined)?.setData(link);
 
       syncTerrainAndWind();
     }
@@ -1214,8 +1323,32 @@ export default function MapView({
   }, []);
 
   useEffect(() => {
+    if (!livePosition) {
+      flewToLiveRef.current = false;
+      return;
+    }
+    const m = mapRef.current;
+    if (!m || !loadedRef.current || flewToLiveRef.current) return;
+    flewToLiveRef.current = true;
+    m.flyTo({
+      center: [livePosition[1], livePosition[0]],
+      zoom: Math.max(m.getZoom(), 11),
+    });
+  }, [livePosition]);
+
+  useEffect(() => {
     syncLocalRef.current?.();
-  }, [routes, course, playbackPosition, playbackHeading, showWind]);
+  }, [
+    routes,
+    course,
+    playbackPosition,
+    playbackHeading,
+    livePosition,
+    liveHeading,
+    planPosition,
+    planHeading,
+    showWind,
+  ]);
 
   useEffect(() => {
     const m = mapRef.current;

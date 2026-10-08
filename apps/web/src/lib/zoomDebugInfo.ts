@@ -133,13 +133,18 @@ export function activeStyleLayers(zoom: number): string {
  * Baseline rows: what is loading at this zoom.
  * Forecast path: forcing (model-native) → terrain lib (200 m) → display grid (zoom tier).
  */
-export function describeZoomDebug(zoom: number): {
+export function describeZoomDebug(
+  zoom: number,
+  forecastZoom?: number,
+  highDef?: boolean,
+): {
   header: string;
   rows: ZoomDebugRow[];
 } {
   const z = Number.isFinite(zoom) ? zoom : 5;
   const tileZ = pmtilesZoom(z);
-  const tier = tierForZoom(z);
+  const fetchZ = forecastZoom != null && Number.isFinite(forecastZoom) ? forecastZoom : z;
+  const tier = tierForZoom(fetchZ);
   const depth = activeDepthFeatures(z);
   const pad =
     tier.windowPadDeg === Math.floor(tier.windowPadDeg)
@@ -152,7 +157,9 @@ export function describeZoomDebug(zoom: number): {
       // /wind/area display series — zoom-tiered on-wire grid
       {
         label: "Forecast",
-        value: `${tier.name} · ${tier.targetResDeg}° (${tier.spacingLabel})`,
+        value: highDef
+          ? `${tier.name} · ${tier.spacingLabel} + WindNinja · locked`
+          : `${tier.name} · ${tier.spacingLabel} · no WindNinja · locked`,
       },
       {
         label: "Grid",
@@ -161,7 +168,7 @@ export function describeZoomDebug(zoom: number): {
       // Terrain downscaling always at full lib res; overview_for_zoom unused
       {
         label: "Terrain",
-        value: "200 m lib · overview=1 (not zoomed)",
+        value: highDef ? "WindNinja on · 200 m lib" : "WindNinja off",
       },
       // GRIB forcing cache — independent of map zoom
       {

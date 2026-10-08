@@ -126,6 +126,12 @@ class RouterParamsOverride(BaseModel):
     creep_commit_min_s: float | None = Field(None, ge=5, le=600)
     finish_snap_radius_nm: float | None = Field(None, ge=0.02, le=2)
     mark_arrival_break_nm: float | None = Field(None, ge=0.01, le=1)
+    waypoint_guidance: int | None = Field(None, ge=0, le=1)
+    waypoint_clearance_nm: float | None = Field(None, ge=0, le=5)
+    waypoint_corridor_margin_nm: float | None = Field(None, ge=0.5, le=30)
+    waypoint_max_points: int | None = Field(None, ge=1, le=32)
+    waypoint_grid_stride: int | None = Field(None, ge=1, le=16)
+    waypoint_pass_nm: float | None = Field(None, ge=0, le=5)
 
 
 class RouteRequest(BaseModel):
@@ -183,6 +189,8 @@ class ModelRoute(BaseModel):
     unreachable: bool = False
     warnings: list[str] = Field(default_factory=list)
     data_source: dict[str, str] = Field(default_factory=dict)
+    # Advisory headland chain the router steered by, when waypoint guidance ran.
+    waypoints: list[LatLon] | None = None
 
 
 class RouteResponse(BaseModel):
