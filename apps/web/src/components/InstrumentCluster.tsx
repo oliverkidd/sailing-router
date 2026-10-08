@@ -25,25 +25,29 @@ export default function InstrumentCluster({
   leg,
   embedded = false,
   distanceNm = 0,
+  variant,
 }: {
   leg: RouteLeg;
   embedded?: boolean;
   distanceNm?: number;
+  /** Prefer over `embedded` when placing outside the map chrome. */
+  variant?: "map" | "embedded" | "rail";
 }) {
   const twd = Math.round(leg.twd ?? 0);
   const twa = Math.round(Math.abs(leg.twa ?? 0));
   const tws = Number((leg.tws ?? 0).toFixed(1));
   const sog = Number((leg.sog ?? 0).toFixed(1));
   const dist = Number(distanceNm.toFixed(1));
+  const mode = variant ?? (embedded ? "embedded" : "map");
+  const className =
+    mode === "rail"
+      ? "instrument-cluster rail-instrument-cluster"
+      : mode === "embedded"
+        ? "instrument-cluster time-nav-instruments"
+        : "instrument-cluster map-instrument-cluster";
 
   return (
-    <div
-      className={
-        embedded
-          ? "instrument-cluster time-nav-instruments"
-          : "instrument-cluster map-instrument-cluster"
-      }
-    >
+    <div className={className}>
       <div className="gauge">
         <span className="gauge-label">TWS</span>
         <span className="gauge-value">{tws}</span>

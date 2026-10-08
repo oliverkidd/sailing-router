@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import subprocess
 import threading
 from pathlib import Path
@@ -51,6 +52,25 @@ class ChartDataUnavailable(RuntimeError):
 
 def _bbox_key(bbox: BBox) -> str:
     return bbox.key()
+
+
+# Nearby courses (mark drag / 1° vs 0.5° margin) used to mint a new 3-decimal
+# cache key and re-parse the 650 MB land FeatureCollection (~45–50 s). Snap to
+# a 0.1° grid so Solent RTI variants share one ~1–2 MB cache file.
+_CACHE_SNAP_DEG = 0.1
+# Skip Europe-scale covering files when looking for a reuse source.
+_COVERING_LAND_MAX_BYTES = 40 * 1024 * 1024
+
+
+def _snap_bbox_for_cache(bbox: BBox) -> BBox:
+    """Expand ``bbox`` onto the cache grid (inclusive of the requested window)."""
+    s = _CACHE_SNAP_DEG
+    return BBox(
+        lat_min=math.floor(bbox.lat_min / s + 1e-12) * s,
+        lon_min=math.floor(bbox.lon_min / s + 1e-12) * s,
+        lat_max=math.ceil(bbox.lat_max / s - 1e-12) * s,
+        lon_max=math.ceil(bbox.lon_max / s - 1e-12) * s,
+    )
 
 
 def _find_osm_shp() -> Path | None:
@@ -144,12 +164,39 @@ def fetch_land_for_bbox(bbox: BBox, *, require_hires: bool = False) -> LandMask:
         return _fetch_land_for_bbox_unlocked(bbox, require_hires=require_hires)
 
 
+def _covering_land_cache_file(bbox: BBox) -> Path | None:
+    """Smallest on-disk land cache that fully covers ``bbox`` (skip mega-files)."""
+    best: Path | None = None
+    best_area = float("inf")
+    for land_path in GEO_CACHE_DIR.glob("*_land_chart.geojson"):
+        if land_path.stat().st_size > _COVERING_LAND_MAX_BYTES:
+            continue
+        stem = land_path.stem[: -len("_land_chart")]
+        cover = _bbox_from_cache_stem(stem)
+        if cover is None:
+            continue
+        if (
+            bbox.lat_min < cover.lat_min
+            or bbox.lon_min < cover.lon_min
+            or bbox.lat_max > cover.lat_max
+            or bbox.lon_max > cover.lon_max
+        ):
+            continue
+        area = (cover.lat_max - cover.lat_min) * (cover.lon_max - cover.lon_min)
+        if area < best_area:
+            best_area = area
+            best = land_path
+    return best
+
+
 def _fetch_land_for_bbox_unlocked(bbox: BBox, *, require_hires: bool = False) -> LandMask:
     del require_hires  # always chart-grade OSM now
     import time  # noqa: PLC0415
 
     t0 = time.perf_counter()
-    key = _bbox_key(bbox)
+    # Snap so mark-drag / margin tweaks reuse one cache entry.
+    cache_bbox = _snap_bbox_for_cache(bbox)
+    key = _bbox_key(cache_bbox)
     out_path = GEO_CACHE_DIR / f"{key}_land_chart.geojson"
     if out_path.exists() and out_path.stat().st_size > 50:
         land = LandMask.from_geojson(out_path)
@@ -160,10 +207,27 @@ def _fetch_land_for_bbox_unlocked(bbox: BBox, *, require_hires: bool = False) ->
         )
         return land
 
-    # Prefer ogr2ogr shapefile clip (~2s) over parsing the 600MB+ FeatureCollection (~30s).
+    # Re-clip from a nearby cached file (~1–20 MB) before touching the 650 MB
+    # Europe FeatureCollection. That cold path was the 45 s "coastal boundaries"
+    # stall after OSM shapefile went missing.
+    cover = _covering_land_cache_file(cache_bbox)
+    if cover is not None:
+        try:
+            land = _filter_geojson_file(cover, cache_bbox, out_path)
+            logger.info(
+                "land path=cover_cache src=%s key=%s ms=%.0f",
+                cover.name,
+                key,
+                (time.perf_counter() - t0) * 1000,
+            )
+            return land
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("covering land cache clip failed: %s", exc)
+
+    # Prefer ogr2ogr shapefile clip (~2s) over parsing the 600MB+ FeatureCollection (~45s).
     if _find_osm_shp() is not None:
         try:
-            land = _clip_osm_shapefile(bbox, out_path)
+            land = _clip_osm_shapefile(cache_bbox, out_path)
             logger.info(
                 "land path=ogr2ogr key=%s ms=%.0f",
                 key,
@@ -175,23 +239,10 @@ def _fetch_land_for_bbox_unlocked(bbox: BBox, *, require_hires: bool = False) ->
         except Exception as exc:  # noqa: BLE001
             logger.warning("ogr2ogr land clip failed, falling back: %s", exc)
 
-    # Prebuilt chart FeatureCollection (slow cold path — last resort for huge files).
-    if _LAND_CHART_GEOJSON.exists() and _LAND_CHART_GEOJSON.stat().st_size > 1000:
-        try:
-            land = _filter_geojson_file(_LAND_CHART_GEOJSON, bbox, out_path)
-            logger.info(
-                "land path=geojson key=%s ms=%.0f",
-                key,
-                (time.perf_counter() - t0) * 1000,
-            )
-            return land
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("land_chart.geojson clip failed: %s", exc)
-
-    # Coastline-build GeoJSONSeq (same clip source as the map tiles).
+    # Coastline-build GeoJSONSeq (stream) before the giant FeatureCollection.
     if _LAND_GEOJSONL.exists() and _LAND_GEOJSONL.stat().st_size > 1000:
         try:
-            land = _filter_geojsonl_to_bbox(_LAND_GEOJSONL, bbox, out_path)
+            land = _filter_geojsonl_to_bbox(_LAND_GEOJSONL, cache_bbox, out_path)
             logger.info(
                 "land path=geojsonl key=%s ms=%.0f",
                 key,
@@ -200,6 +251,19 @@ def _fetch_land_for_bbox_unlocked(bbox: BBox, *, require_hires: bool = False) ->
             return land
         except Exception as exc:  # noqa: BLE001
             logger.warning("land.geojsonl filter failed: %s", exc)
+
+    # Prebuilt chart FeatureCollection — last resort (650 MB parse).
+    if _LAND_CHART_GEOJSON.exists() and _LAND_CHART_GEOJSON.stat().st_size > 1000:
+        try:
+            land = _filter_geojson_file(_LAND_CHART_GEOJSON, cache_bbox, out_path)
+            logger.info(
+                "land path=geojson key=%s ms=%.0f",
+                key,
+                (time.perf_counter() - t0) * 1000,
+            )
+            return land
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("land_chart.geojson clip failed: %s", exc)
 
     raise ChartDataUnavailable(
         f"Failed to build OSM land mask for {bbox.key()}. "
@@ -261,7 +325,8 @@ def _fetch_depth_for_bbox_unlocked(bbox: BBox, land: LandMask | None = None) -> 
     import time  # noqa: PLC0415
 
     t0 = time.perf_counter()
-    key = _bbox_key(bbox)
+    cache_bbox = _snap_bbox_for_cache(bbox)
+    key = _bbox_key(cache_bbox)
     npz_path = GEO_CACHE_DIR / f"{key}_depth_chart.npz"
     if npz_path.exists():
         z = np.load(npz_path)
@@ -276,11 +341,11 @@ def _fetch_depth_for_bbox_unlocked(bbox: BBox, land: LandMask | None = None) -> 
 
     ds = _open_region_depth()
     left, bottom, right, top = ds.bounds
-    # Clip request to mosaic footprint.
-    west = max(bbox.lon_min, left)
-    east = min(bbox.lon_max, right)
-    south = max(bbox.lat_min, bottom)
-    north = min(bbox.lat_max, top)
+    # Clip snapped request to mosaic footprint.
+    west = max(cache_bbox.lon_min, left)
+    east = min(cache_bbox.lon_max, right)
+    south = max(cache_bbox.lat_min, bottom)
+    north = min(cache_bbox.lat_max, top)
     if east <= west or north <= south:
         raise ChartDataUnavailable(
             f"Course bbox {bbox.key()} is outside chart bathymetry "

@@ -1,8 +1,8 @@
 /**
  * Viewport helpers for browse wind.
  *
- * Browse density is locked to a High-def toggle, not the camera zoom: standard
- * uses the fine tier, High def uses ultra + WindNinja. The server still pads
+ * Browse density is locked to a Terrain toggle, not the camera zoom: standard
+ * uses the fine tier, Terrain uses ultra + WindNinja. The server still pads
  * the request once; cache bookkeeping uses the returned series.bbox.
  */
 

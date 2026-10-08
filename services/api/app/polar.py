@@ -173,10 +173,15 @@ class PolarTable:
             return 0.0
 
         # 0.05 kn × 0.25° buckets — well below polar/table resolution.
+        # Always evaluate at the bucket centre so the first query in a bucket
+        # cannot bias later ones (reusing one Boat across eval cases used to
+        # change routes depending on case order).
         sk = (int(round(tws * 20.0)), int(round(twa * 4.0)))
         hit = self._speed_cache.get(sk)
         if hit is not None:
             return hit
+        tws = sk[0] / 20.0
+        twa = sk[1] / 4.0
 
         # Below the lowest tabulated TWS, scale linearly toward zero (no phantom speed).
         low_air_factor = 1.0
@@ -213,6 +218,7 @@ class PolarTable:
         hit = self._vmg_cache.get(vk)
         if hit is not None:
             return hit
+        tws = vk[0] / 20.0
 
         if upwind:
             lo, hi = float(self.twa[0]), 90.0

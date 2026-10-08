@@ -1,6 +1,6 @@
 /** Shared map overlay helpers. */
 
-import type { Course, LatLon, RouteLeg } from "./types";
+import type { Course, LatLon, ModelRoute, RouteLeg } from "./types";
 
 export interface MapBounds {
   lat_min: number;
@@ -51,7 +51,8 @@ export interface RouteSessionV1 {
     routeIndex: number;
     overlayTimeUtc: string;
     horizonStartUtc: string;
-    detailOpen: boolean;
+    /** @deprecated Right detail tray retired — ignored when present. */
+    detailOpen?: boolean;
   };
 }
 
@@ -92,9 +93,89 @@ export function isPointSet(p: LatLon | null | undefined): boolean {
   return !(p[0] === 0 && p[1] === 0);
 }
 
+/** Lon/lat box covering set course points and/or route legs (null if empty). */
+export function boundsFromCourseAndRoutes(
+  course?: Course | null,
+  routes?: ModelRoute[] | null,
+): MapBounds | null {
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  const add = (lat: number, lon: number) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if (lat === 0 && lon === 0) return;
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLon = Math.min(minLon, lon);
+    maxLon = Math.max(maxLon, lon);
+  };
+  if (course) {
+    if (isPointSet(course.start)) add(course.start[0], course.start[1]);
+    if (isPointSet(course.finish)) add(course.finish[0], course.finish[1]);
+    for (const mk of course.marks) {
+      if (isPointSet(mk.position)) add(mk.position[0], mk.position[1]);
+    }
+  }
+  if (routes) {
+    for (const r of routes) {
+      for (const leg of r.legs) add(leg.position[0], leg.position[1]);
+    }
+  }
+  if (!Number.isFinite(minLat)) return null;
+  if (minLat === maxLat) {
+    minLat -= 0.02;
+    maxLat += 0.02;
+  }
+  if (minLon === maxLon) {
+    minLon -= 0.02;
+    maxLon += 0.02;
+  }
+  return {
+    lat_min: minLat,
+    lat_max: maxLat,
+    lon_min: minLon,
+    lon_max: maxLon,
+  };
+}
+
+/** Finish position: explicit finish, else last placed mark (skip pending [0,0]). */
+export function effectiveFinish(course: Course | null | undefined): LatLon | null {
+  if (!course) return null;
+  if (isPointSet(course.finish)) return course.finish;
+  for (let i = course.marks.length - 1; i >= 0; i--) {
+    const pos = course.marks[i]?.position;
+    if (pos && isPointSet(pos)) return pos;
+  }
+  return null;
+}
+
+/** Course ready when start is set and there is a finish or at least one mark. */
 export function courseIsReady(course: Course | null | undefined): boolean {
   if (!course) return false;
-  return isPointSet(course.start) && isPointSet(course.finish);
+  return isPointSet(course.start) && effectiveFinish(course) != null;
+}
+
+/** Course with finish filled from last placed mark when finish was left unset. */
+export function courseWithEffectiveFinish(course: Course): Course {
+  if (isPointSet(course.finish)) return course;
+  const fin = effectiveFinish(course);
+  if (!fin) return course;
+  let lastPlaced = -1;
+  for (let i = course.marks.length - 1; i >= 0; i--) {
+    if (isPointSet(course.marks[i].position)) {
+      lastPlaced = i;
+      break;
+    }
+  }
+  if (lastPlaced < 0) return course;
+  return {
+    ...course,
+    finish: fin,
+    marks: course.marks
+      .filter((_, i) => i !== lastPlaced)
+      .filter((m) => isPointSet(m.position)),
+  };
 }
 
 /** Haversine distance in nautical miles. */
@@ -202,6 +283,23 @@ export function segmentBearingDeg(a: LatLon, b: LatLon): number {
   const x =
     Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/**
+ * Last leg at or before `tUtc`. Prefer this over nearest-time when marks share
+ * a timestamp with their arrival node (router sets mark.t = arrival.t).
+ */
+export function floorLegIndex(legs: RouteLeg[], tUtc: string): number {
+  if (!legs.length) return -1;
+  const tMs = new Date(tUtc).getTime();
+  if (Number.isNaN(tMs)) return 0;
+  if (tMs < new Date(legs[0].t_utc).getTime()) return 0;
+  let idx = 0;
+  for (let i = 1; i < legs.length; i++) {
+    if (new Date(legs[i].t_utc).getTime() <= tMs) idx = i;
+    else break;
+  }
+  return idx;
 }
 
 /** Bearing of the route segment the boat is on (matches the red line). */

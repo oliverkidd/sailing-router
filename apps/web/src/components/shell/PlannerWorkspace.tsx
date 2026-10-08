@@ -1,32 +1,36 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BoatConfigPanel from "@/components/BoatConfigPanel";
-import CourseEditor, { type EditMode } from "@/components/CourseEditor";
-import LiveRacePanel, { useLivePosition } from "@/components/LiveRacePanel";
-import OfflinePack from "@/components/OfflinePack";
-import ForecastDropdown from "@/components/ForecastDropdown";
-import ForecastPicker from "@/components/ForecastPicker";
-import MapControls from "@/components/MapControls";
-import MapLoadOverlay, { type MapLoadKind } from "@/components/MapLoadOverlay";
+import CourseEditor, {
+  courseCollapsedSummary,
+  type EditMode,
+  type StartSource,
+} from "@/components/CourseEditor";
+import { useLivePosition } from "@/components/LiveRacePanel";
+import InstrumentCluster from "@/components/InstrumentCluster";
 import { type ModelStatus } from "@/components/RouteBuildProgress";
-import {
+import RouteProgress, {
   applyRouteEvent,
   initialRouteSteps,
   resetModelSteps,
 } from "@/components/RouteProgress";
-import RouteDetailPanel from "@/components/RouteDetailPanel";
-import RouteModelTabs from "@/components/RouteModelTabs";
-import RouteReview, { formatSummaryClipboard } from "@/components/RouteReview";
-import TimeScrubber from "@/components/TimeScrubber";
+import RouteLegTable from "@/components/RouteLegTable";
+import RouteReview from "@/components/RouteReview";
 import WindLegend from "@/components/WindLegend";
-import ZoomDebugChip from "@/components/ZoomDebugChip";
+import BrowseTimeDock from "@/components/shell/BrowseTimeDock";
+import ForecastCheckList from "@/components/shell/ForecastCheckList";
+import MapIconControls from "@/components/shell/MapIconControls";
 import { api } from "@/lib/api";
 import { pinChartCache } from "@/lib/deviceCache";
+import { downloadVoyageChart } from "@/lib/voyagePack";
 import {
+  boundsFromCourseAndRoutes,
   clearStoredRouteSession,
   courseIsReady,
+  courseWithEffectiveFinish,
   cumulativeDistanceNm,
   currentForecastHourUtc,
   emptyCourse,
@@ -49,7 +53,6 @@ import {
 import {
   contiguousRunMax,
   fetchWindArea,
-  fetchWindAreaStream,
   floorHourIso,
   hoursAheadIso,
   mergeSeries,
@@ -57,7 +60,6 @@ import {
   seriesCoversHour,
   type WindSeries,
 } from "@/lib/meteoGrid";
-import { applyWindEvent, initialWindSteps } from "@/lib/windLoadProgress";
 import type {
   BoatConfig,
   Course,
@@ -82,14 +84,14 @@ type WindCacheEntry = {
   tier: string;
 };
 
-function courseBBox(course: Course, margin = SERIES_MARGIN_DEG): MapBounds {
-  const lats = [course.start[0], course.finish[0], ...course.marks.map((m) => m.position[0])];
-  const lons = [course.start[1], course.finish[1], ...course.marks.map((m) => m.position[1])];
+function courseBBox(course: Course, margin = SERIES_MARGIN_DEG): MapBounds | null {
+  const box = boundsFromCourseAndRoutes(course);
+  if (!box) return null;
   return {
-    lat_min: Math.min(...lats) - margin,
-    lat_max: Math.max(...lats) + margin,
-    lon_min: Math.min(...lons) - margin,
-    lon_max: Math.max(...lons) + margin,
+    lat_min: box.lat_min - margin,
+    lat_max: box.lat_max + margin,
+    lon_min: box.lon_min - margin,
+    lon_max: box.lon_max + margin,
   };
 }
 
@@ -118,13 +120,71 @@ const INITIAL_BOAT: BoatConfig = {
 
 const INITIAL_COURSE = emptyCourse("1970-01-01T00:00:00.000Z");
 
-export default function Home() {
+export default function PlannerWorkspace() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const mode: "basic" | "routing" =
+    pathname === "/route" || pathname?.startsWith("/route/") ? "routing" : "basic";
+
+  const RAIL_MIN = 320;
+  const RAIL_MAX = 720;
+  const RAIL_DEFAULT = 360;
+  const RAIL_WIDTH_KEY = "sailing-router-rail-width-v1";
+  const [railWidth, setRailWidth] = useState(RAIL_DEFAULT);
+  const railWidthRef = useRef(railWidth);
+  railWidthRef.current = railWidth;
+  const railDragRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(RAIL_WIDTH_KEY);
+      const n = raw ? Number(raw) : NaN;
+      if (Number.isFinite(n)) {
+        setRailWidth(Math.min(RAIL_MAX, Math.max(RAIL_MIN, n)));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const drag = railDragRef.current;
+      if (!drag) return;
+      const next = Math.min(
+        RAIL_MAX,
+        Math.max(RAIL_MIN, drag.startW + (e.clientX - drag.startX)),
+      );
+      railWidthRef.current = next;
+      setRailWidth(next);
+    };
+    const onUp = () => {
+      if (!railDragRef.current) return;
+      railDragRef.current = null;
+      try {
+        localStorage.setItem(RAIL_WIDTH_KEY, String(railWidthRef.current));
+      } catch {
+        /* ignore */
+      }
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
   const [apiUp, setApiUp] = useState<boolean | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelPreset[]>([]);
   const [boat, setBoat] = useState<BoatConfig>(INITIAL_BOAT);
   const [course, setCourse] = useState<Course>(INITIAL_COURSE);
   const [courseReadyToPersist, setCourseReadyToPersist] = useState(false);
   const [sessionHydrated, setSessionHydrated] = useState(false);
+  /** Opaque cover until hydrate + first map frame (avoids sea-view jump). */
+  const [mapBooted, setMapBooted] = useState(false);
   const skipNextRouteClear = useRef(true);
   const courseForRunRef = useRef(course);
   const [live, setLive] = useState(false);
@@ -132,6 +192,21 @@ export default function Home() {
   const [nowUtc, setNowUtc] = useState(() => new Date().toISOString());
   const { fix: liveFix, error: liveError } = useLivePosition(live);
   const [editMode, setEditMode] = useState<EditMode>("none");
+  const [startSource, setStartSource] = useState<StartSource>("point");
+  const [setupOpen, setSetupOpen] = useState({
+    course: true,
+    boat: false,
+    forecasts: false,
+  });
+  /** Open one section at a time; clicking the open one collapses all. */
+  const toggleSetup = (key: keyof typeof setupOpen) => {
+    setSetupOpen((prev) => {
+      if (prev[key]) {
+        return { course: false, boat: false, forecasts: false };
+      }
+      return { course: false, boat: false, forecasts: false, [key]: true };
+    });
+  };
   const [routes, setRoutes] = useState<ModelRoute[]>([]);
   const [running, setRunning] = useState(false);
   const [runMsg, setRunMsg] = useState<string>("");
@@ -147,14 +222,12 @@ export default function Home() {
 
   const [activeModelId, setActiveModelId] = useState("");
   const [routeIndex, setRouteIndex] = useState(0);
-  const [detailOpen, setDetailOpen] = useState(false);
   const [fitRouteKey, setFitRouteKey] = useState("");
   const [prepState, setPrepState] = useState<
     "idle" | "preparing" | "ready" | "error" | "warning"
   >("idle");
   const [routeModal, setRouteModal] = useState<"hidden" | "running" | "error" | "done">("hidden");
   const [routeSteps, setRouteSteps] = useState<RouteProgressStep[]>([]);
-  const [windSteps, setWindSteps] = useState<RouteProgressStep[]>([]);
   const [routeWarnings, setRouteWarnings] = useState<string[]>([]);
   /** Models that failed / unfinished — show per-card Retry. */
   const [retryableModelIds, setRetryableModelIds] = useState<string[]>([]);
@@ -219,8 +292,6 @@ export default function Home() {
   const windLoading =
     mapMode === "browse" &&
     (activeStatus === "fetching" || (hourUncovered && activeStatus !== "error"));
-  const routeLoading = routeModal !== "hidden";
-
   const modelLabels = useMemo(
     () => Object.fromEntries(availableModels.map((m) => [m.id, m.label])),
     [availableModels],
@@ -236,19 +307,6 @@ export default function Home() {
     }
     return maxEta;
   }, [routes, course.depart_utc, horizonEndUtc]);
-
-  let mapLoadKind: MapLoadKind | null = null;
-  let mapLoadLabel = "";
-  if (routeLoading) {
-    mapLoadKind = "route";
-    mapLoadLabel = routeModal === "done" ? "Route ready" : "Computing route…";
-  } else if (windLoading && !windSeries) {
-    mapLoadKind = "wind-initial";
-    mapLoadLabel = activeModelId ? `Loading ${activeModelId}` : "Loading forecast";
-  } else if (windLoading) {
-    mapLoadKind = "wind-hour";
-    mapLoadLabel = `Loading ${scrubHourUtc.slice(11, 16)} UTC`;
-  }
 
   const boatAtTime = useMemo(() => {
     if (!activeRoute?.legs?.length) return null;
@@ -274,12 +332,26 @@ export default function Home() {
   }, [live, liveFollowNow, nowUtc]);
 
   useEffect(() => {
-    if (!live || !liveFix) return;
-    setCourse((current) => {
-      if (isPointSet(current.start)) return current;
-      return { ...current, start: liveFix.position };
+    if (!live || !liveFix || startSource !== "location") return;
+    setCourse((current) => ({ ...current, start: liveFix.position }));
+  }, [live, liveFix, startSource]);
+
+  // Basic browse: ensure at least one forecast is selected so wind loads without a dock picker.
+  useEffect(() => {
+    if (availableModels.length === 0) return;
+    setSelected((prev) => {
+      if (prev.size > 0) {
+        const stillValid = [...prev].filter((id) => availableModels.some((m) => m.id === id));
+        if (stillValid.length === prev.size) return prev;
+        if (stillValid.length > 0) return new Set(stillValid);
+      }
+      return new Set([availableModels[0].id]);
     });
-  }, [live, liveFix]);
+    setActiveModelId((id) => {
+      if (id && availableModels.some((m) => m.id === id)) return id;
+      return availableModels[0].id;
+    });
+  }, [availableModels]);
 
   const playbackPosition = boatAtTime?.position ?? null;
   const playbackHeading = boatAtTime?.heading ?? null;
@@ -288,9 +360,6 @@ export default function Home() {
     if (!activeRoute?.legs?.length || !boatAtTime) return 0;
     return cumulativeDistanceNm(activeRoute.legs, boatAtTime.index, boatAtTime.position);
   }, [activeRoute, boatAtTime]);
-
-  const courseHasPoints =
-    isPointSet(course.start) || isPointSet(course.finish) || course.marks.length > 0;
 
   useEffect(() => {
     const stored = loadStoredCourse();
@@ -318,9 +387,11 @@ export default function Home() {
       setRouteIndex(session.ui.routeIndex ?? 0);
       setOverlayTimeUtc(session.ui.overlayTimeUtc || nextCourse.depart_utc);
       setHorizonStartUtc(session.ui.horizonStartUtc || nextCourse.depart_utc);
-      setDetailOpen(Boolean(session.ui.detailOpen));
       setPrepState("ready");
       skipNextRouteClear.current = true;
+      if (typeof window !== "undefined" && window.location.pathname === "/") {
+        router.replace("/route");
+      }
     } else {
       setOverlayTimeUtc(now);
       setHorizonStartUtc(now);
@@ -329,12 +400,34 @@ export default function Home() {
     }
     setCourseReadyToPersist(true);
     setSessionHydrated(true);
+
+    const hasCoursePts =
+      isPointSet(nextCourse.start) ||
+      isPointSet(nextCourse.finish) ||
+      nextCourse.marks.some((m) => isPointSet(m.position));
+    const hasRoutes =
+      !!(session && session.courseKey === key && session.routes.length > 0);
+    if (hasCoursePts || hasRoutes) {
+      // Frame the restored course/route instead of the default wide sea view.
+      setFitRouteKey(`load-${Date.now()}`);
+    }
   }, []);
+
+  useEffect(() => {
+    if (mapBooted) return;
+    const t = window.setTimeout(() => setMapBooted(true), 5000);
+    return () => window.clearTimeout(t);
+  }, [mapBooted]);
 
   useEffect(() => {
     if (!courseReadyToPersist) return;
     saveStoredCourse(course);
   }, [course, courseReadyToPersist]);
+
+  const mapBootBounds = useMemo(
+    () => (sessionHydrated ? boundsFromCourseAndRoutes(course, routes) : null),
+    [sessionHydrated, course, routes],
+  );
 
   const courseRouteKey = useMemo(
     () =>
@@ -376,7 +469,6 @@ export default function Home() {
         routeIndex,
         overlayTimeUtc,
         horizonStartUtc,
-        detailOpen,
       },
     });
   }, [
@@ -387,7 +479,6 @@ export default function Home() {
     routeIndex,
     overlayTimeUtc,
     horizonStartUtc,
-    detailOpen,
     courseRouteKey,
   ]);
 
@@ -424,27 +515,7 @@ export default function Home() {
       setStatus(modelId, "fetching");
       if (modelId === activeModelId) setOverlayMsg(null);
 
-      const cold = !browseCacheRef.current[modelId]?.series;
-      if (cold) {
-        setWindSteps(initialWindSteps(useTerrain));
-      }
-
-      const fetchPromise = cold
-        ? fetchWindAreaStream(
-            reqBounds,
-            modelId,
-            hour,
-            endHour,
-            (event) => {
-              setWindSteps((prev) => applyWindEvent(prev, event));
-            },
-            ac.signal,
-            z,
-            useTerrain,
-          )
-        : fetchWindArea(reqBounds, modelId, hour, endHour, ac.signal, z, useTerrain);
-
-      fetchPromise
+      fetchWindArea(reqBounds, modelId, hour, endHour, ac.signal, z, useTerrain)
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
@@ -615,7 +686,7 @@ export default function Home() {
     [fetchBrowseFocus, prefetchBrowseRange, windNinjaOpt],
   );
 
-  const applyHighDef = useCallback(
+  const applyTerrain = useCallback(
     (on: boolean) => {
       setWindNinjaOpt(on);
       if (inRouteReview) return;
@@ -645,6 +716,7 @@ export default function Home() {
     if (routes.length === 0 || !courseIsReady(course) || apiUp !== true) return;
 
     const bbox = courseBBox(course);
+    if (!bbox) return;
     for (const route of routes) {
       if (!route.legs.length) continue;
       const modelId = route.model_id;
@@ -828,38 +900,32 @@ export default function Home() {
     if (editMode === "none") return;
     if (editMode === "start") setCourse((c) => ({ ...c, start: [lat, lon] }));
     else if (editMode === "finish") setCourse((c) => ({ ...c, finish: [lat, lon] }));
-    else if (editMode === "mark")
-      setCourse((c) => ({
-        ...c,
-        marks: withSequentialMarkNames([
-          ...c.marks,
-          {
-            position: [lat, lon],
-            radius_nm: 0.3,
-            rounding: "either",
-          },
-        ]),
-      }));
-    setEditMode("none");
-  };
-
-  const clearCourse = () => {
-    setCourse((c) => ({
-      ...c,
-      start: [0, 0],
-      finish: [0, 0],
-      marks: [],
-    }));
-    setEditMode("none");
-  };
-
-  const copySummary = async () => {
-    const text = formatSummaryClipboard(course, selected, availableModels);
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      /* clipboard may be blocked */
+    else if (editMode === "mark") {
+      setCourse((c) => {
+        const pendingIdx = c.marks.findIndex((m) => !isPointSet(m.position));
+        if (pendingIdx >= 0) {
+          return {
+            ...c,
+            marks: c.marks.map((mk, i) =>
+              i === pendingIdx ? { ...mk, position: [lat, lon] } : mk,
+            ),
+          };
+        }
+        return {
+          ...c,
+          marks: withSequentialMarkNames([
+            ...c.marks,
+            {
+              position: [lat, lon],
+              radius_nm: 0.05,
+              rounding: "port",
+              name: null,
+            },
+          ]),
+        };
+      });
     }
+    setEditMode("none");
   };
 
   const toggleModel = (id: string) => {
@@ -917,9 +983,16 @@ export default function Home() {
     setOverlayTimeUtc(courseForRunRef.current.depart_utc);
     setHorizonStartUtc(courseForRunRef.current.depart_utc);
     setShowWind(true);
+    // Fit only if the full route is not already in view (handled in MapView).
     setFitRouteKey(`${Date.now()}-${okRoutes.length}`);
     pinChartCache().catch(() => {
       /* The route is already in localStorage if the chart cache is unavailable. */
+    });
+    // Always cache voyage charts in the background after a successful route.
+    downloadVoyageChart(window.location.origin, courseForRunRef.current, () => {
+      /* progress unused — silent background save */
+    }).catch(() => {
+      /* Offline pack is best-effort. */
     });
     if (warnings.length > 0) {
       setPrepState("warning");
@@ -930,21 +1003,9 @@ export default function Home() {
       setRunMsg("");
       setRouteWarnings([]);
     }
-    setRouteSteps((prev) =>
-      prev.map((s) => {
-        if (s.status === "done" || s.status === "error") return s;
-        const ms =
-          s.status === "active" && s.ms != null ? Math.max(0, Date.now() - s.ms) : s.ms;
-        return { ...s, status: "done" as const, ms };
-      }),
-    );
-    setRouteModal("done");
-  };
-
-  /** Dismiss the post-route summary overlay; keep routes for review. */
-  const acknowledgeRouteResults = () => {
-    setRouteModal("hidden");
+    // Drop loading UI — outcome appears in the rail review panel.
     setRouteSteps([]);
+    setRouteModal("hidden");
   };
 
   /** Leave route review → browse / edit course. */
@@ -956,18 +1017,18 @@ export default function Home() {
     setOverlayTimeUtc(now);
     setHorizonStartUtc(now);
     setFitRouteKey("");
-    setDetailOpen(false);
   };
 
   const runRoute = async (courseOverride?: Course) => {
     // onClick handlers pass a MouseEvent if wired as onClick={runRoute}; only a
     // real Course override (e.g. live reroute) may replace the editor course.
-    const courseForRun =
+    const rawCourse =
       courseOverride &&
       Array.isArray(courseOverride.start) &&
       Array.isArray(courseOverride.finish)
         ? courseOverride
         : course;
+    const courseForRun = courseWithEffectiveFinish(rawCourse);
     courseForRunRef.current = courseForRun;
     const modelIds = Array.from(selected);
     if (!boat.polar_id) {
@@ -975,9 +1036,9 @@ export default function Home() {
       setRunMsg("Load a polar first.");
       return;
     }
-    if (!courseIsReady(courseForRun)) {
+    if (!courseIsReady(rawCourse)) {
       setPrepState("error");
-      setRunMsg("Set start and finish on the map first.");
+      setRunMsg("Add a start and at least one more point first.");
       return;
     }
     if (modelIds.length === 0) {
@@ -1233,255 +1294,492 @@ export default function Home() {
   const activeError =
     !!activeModelId && overlayStatus[activeModelId] === "error" ? overlayMsg : null;
 
+  const phase: "setup" | "running" | "review" =
+    routes.length > 0
+      ? "review"
+      : routeModal === "running" || routeModal === "error"
+        ? "running"
+        : "setup";
+
+  const handleRerouteFromGps = () => {
+    if (!liveFix || !isPointSet(course.finish)) return;
+    setStartSource("location");
+    const next: Course = {
+      ...course,
+      start: liveFix.position,
+      depart_utc: new Date().toISOString(),
+    };
+    setCourse(next);
+    setLiveFollowNow(true);
+    setNowUtc(next.depart_utc);
+    void runRoute(next);
+  };
+
+  const handleUseGpsStart = () => {
+    setLive(true);
+    setLiveFollowNow(true);
+    setStartSource("location");
+    if (liveFix) {
+      setCourse((c) => ({ ...c, start: liveFix.position }));
+    }
+  };
+
+  const goHome = () => {
+    if (routes.length > 0 || routeModal !== "hidden") {
+      exitRouting();
+    }
+    router.push("/");
+  };
+
+  const runDisabledReason =
+    startSource === "location" && !live
+      ? "Turn on GPS (top right) to start from current location"
+      : startSource === "location" && !liveFix
+        ? "Waiting for GPS fix…"
+        : undefined;
+
+  void liveError;
+  void nowUtc;
+
   return (
-    <div id="app-shell">
-      <aside className="rail">
-        <div className="rail-section">
-          <div className="rail-section-head">
-            <h2>Course</h2>
-            <button
-              type="button"
-              className="rail-section-action"
-              onClick={clearCourse}
-              disabled={!courseHasPoints}
-              title="Clear course"
-            >
-              Clear
-            </button>
-          </div>
-          <CourseEditor
-            course={course}
-            onCourseChange={setCourse}
-            editMode={editMode}
-            onEditMode={setEditMode}
-            courseReady={courseIsReady(course)}
-          />
-        </div>
-
-        <div className="rail-section">
-          <h2>Boat</h2>
-          <BoatConfigPanel
-            config={boat}
-            onConfigChange={setBoat}
-            minDepthM={course.min_depth_m}
-            onMinDepthChange={(m) => setCourse((c) => ({ ...c, min_depth_m: m }))}
-          />
-        </div>
-
-        <div className="rail-section">
-          <div className="rail-section-head">
-            <h2>Summary</h2>
-            <button
-              type="button"
-              className="rail-section-action"
-              onClick={copySummary}
-              disabled={!courseIsReady(course)}
-              title="Copy summary to clipboard"
-            >
-              Copy
-            </button>
-          </div>
-          <RouteReview
-            course={course}
-            selected={selected}
-            models={availableModels}
-            running={running || routeModal === "error"}
-            prepState={prepState}
-            message={routeModal === "hidden" ? runMsg || undefined : undefined}
-            onRun={() => {
-              void runRoute();
+    <div
+      id="app-shell"
+      className={mode === "basic" ? "app-shell--basic" : "app-shell--routing"}
+      style={
+        mode === "routing"
+          ? ({ ["--rail-w" as string]: `${railWidth}px` } as React.CSSProperties)
+          : undefined
+      }
+    >
+      {mode === "routing" && (
+        <aside className="rail">
+          <div
+            className="rail-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize planner panel"
+            title="Drag to resize"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              railDragRef.current = { startX: e.clientX, startW: railWidth };
+              document.body.style.cursor = "col-resize";
+              document.body.style.userSelect = "none";
             }}
           />
-        </div>
-      </aside>
-
-      <div className={`map-area${inRouteReview ? " map-area--review" : ""}`}>
-        <MapView
-          routes={routes}
-          course={course}
-          showWind={showWind}
-          showDepth={showDepth}
-          windTimeUtc={routes.length > 0 ? scrubHourUtc : overlayTimeUtc}
-          windSeries={windSeries}
-          playbackPosition={playbackPosition}
-          playbackHeading={playbackHeading}
-          livePosition={live && liveFix ? liveFix.position : null}
-          liveHeading={liveFix?.headingDeg ?? null}
-          planPosition={live && planNow ? planNow.position : null}
-          planHeading={live && planNow ? planNow.heading : null}
-          fitRouteKey={fitRouteKey}
-          editMode={editMode}
-          onMapClick={editMode === "none" ? undefined : handleMapClick}
-          onRouteSelect={setActiveModelId}
-          onRouteSeek={(id, t) => {
-            setActiveModelId(id);
-            setOverlayTimeUtc(t);
-          }}
-          onCoursePointMove={(kind, index, lat, lon) => {
-            setCourse((c) => {
-              if (kind === "start") return { ...c, start: [lat, lon] };
-              if (kind === "finish") return { ...c, finish: [lat, lon] };
-              if (kind === "mark" && index != null) {
-                return {
-                  ...c,
-                  marks: c.marks.map((mk, i) =>
-                    i === index ? { ...mk, position: [lat, lon] } : mk,
-                  ),
-                };
-              }
-              return c;
-            });
-          }}
-          onOverlayError={setOverlayMsg}
-          onViewportChange={handleViewportChange}
-        />
-        {inRouteReview && (
-          <RouteModelTabs
-            routes={routes}
-            activeModelId={activeModelId}
-            modelLabels={modelLabels}
-            onActiveModel={setActiveModelId}
-          />
-        )}
-        <div className="map-corner-stack">
-        <OfflinePack course={course} canDownload={courseIsReady(course)} />
-        <LiveRacePanel
-          enabled={live}
-          onToggle={() => {
-            setLive((on) => {
-              const next = !on;
-              if (next) setLiveFollowNow(true);
-              return next;
-            });
-          }}
-          followNow={liveFollowNow}
-          onFollowNow={() => {
-            setLiveFollowNow(true);
-            setNowUtc(new Date().toISOString());
-          }}
-          fix={liveFix}
-          error={liveError}
-          legs={activeRoute?.legs ?? null}
-          departUtc={course.depart_utc}
-          nowUtc={nowUtc}
-          canReroute={Boolean(liveFix) && isPointSet(course.finish) && !running}
-          onUseAsStart={() => {
-            if (!liveFix) return;
-            setCourse((current) => ({ ...current, start: liveFix.position }));
-          }}
-          onReroute={() => {
-            if (!liveFix || !isPointSet(course.finish)) return;
-            const next: Course = {
-              ...course,
-              start: liveFix.position,
-              depart_utc: new Date().toISOString(),
-            };
-            setCourse(next);
-            setLiveFollowNow(true);
-            setNowUtc(next.depart_utc);
-            void runRoute(next);
-          }}
-        />
-        </div>
-        <TimeScrubber
-          overlayTimeUtc={overlayTimeUtc}
-          onTime={(t) => {
-            setLiveFollowNow(false);
-            setOverlayTimeUtc(t);
-          }}
-          horizonStartUtc={horizonStartUtc}
-          horizonEndUtc={inRouteReview ? routeHorizonEndUtc : horizonEndUtc}
-          loading={windLoading && !inRouteReview}
-          routeActive={inRouteReview}
-          leg={playbackLeg}
-          legs={activeRoute?.legs ?? null}
-          playUntilUtc={activeRoute?.eta_utc ?? null}
-          distanceNm={playbackDistanceNm}
-        />
-        <MapLoadOverlay
-          kind={mapLoadKind}
-          label={mapLoadLabel}
-          routeSteps={routeLoading ? routeSteps : undefined}
-          routeModelIds={routeLoading ? Array.from(selected) : undefined}
-          routeModelLabels={modelLabels}
-          windSteps={!routeLoading && mapLoadKind === "wind-initial" ? windSteps : undefined}
-          routeWarnings={routeLoading ? routeWarnings : undefined}
-          routeError={routeModal === "error"}
-          retryableModelIds={retryableModelIds}
-          completedRoutes={routeModal === "done" ? routes : undefined}
-          onRetry={() => {
-            void runRoute();
-          }}
-          onRetryModel={retryModel}
-          onEdit={dismissRouteModal}
-          onView={acknowledgeRouteResults}
-        />
-        {activeError && <div className="map-error-banner">{activeError}</div>}
-        <MapControls
-          toggles={{ showWind, showDepth }}
-          highDef={windNinjaOpt}
-          highDefDisabled={inRouteReview}
-          onHighDef={applyHighDef}
-          onChange={(patch) => {
-            if (patch.showWind !== undefined) setShowWind(patch.showWind);
-            if (patch.showDepth !== undefined) setShowDepth(patch.showDepth);
-          }}
-        />
-        <ZoomDebugChip
-          zoom={mapZoom}
-          forecastZoom={browseFetchZoom(windNinjaOpt)}
-          terrainOn={windNinjaOpt}
-          terrainDisabled={inRouteReview}
-          terrainLibrary={windSeries?.terrain_library ?? null}
-          terrainApplied={windSeries?.terrain_applied ?? null}
-          terrainLibraryVersion={windSeries?.terrain_library_version ?? null}
-          onTerrainToggle={applyHighDef}
-        />
-        <WindLegend visible={showWind && !!windSeries} />
-        {inRouteReview ? (
-          <div className="forecast-dock">
+          <div className="rail-topbar">
             <button
               type="button"
-              className="exit-routing-btn"
-              onClick={exitRouting}
+              className="rail-home-btn"
+              onClick={goHome}
+              title="Back to map"
+              aria-label="Home"
             >
-              Exit routing
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M4 11.5L12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-8.5z"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
+            <span className="rail-topbar-title">Route planner</span>
           </div>
-        ) : (
-          <div className="forecast-dock">
-            <ForecastPicker
-              routes={routes}
-              models={availableModels}
-              selectedModels={selected}
-              activeModelId={activeModelId}
-              onActiveModel={setActiveModelId}
-              overlayStatus={overlayStatus}
+
+          {phase === "running" ? (
+            <div className="rail-section rail-route-progress">
+              <h2>{routeModal === "error" ? "Routing failed" : "Building routes"}</h2>
+              <RouteProgress
+                steps={routeSteps}
+                modelIds={
+                  routeRunModelIdsRef.current.length > 0
+                    ? routeRunModelIdsRef.current
+                    : Array.from(selected)
+                }
+                modelLabels={modelLabels}
+                warnings={routeWarnings}
+                showActions={routeModal === "error"}
+                retryableModelIds={retryableModelIds}
+                onRetry={
+                  routeModal === "error"
+                    ? () => {
+                        void runRoute();
+                      }
+                    : undefined
+                }
+                onRetryModel={routeModal === "error" ? retryModel : undefined}
+                onEdit={routeModal === "error" ? dismissRouteModal : undefined}
+              />
+            </div>
+          ) : phase === "review" ? (
+            <div className="rail-outcome">
+              <div className="rail-vert-tabs" role="tablist" aria-label="Route forecast">
+                {routes.map((r) => (
+                  <button
+                    key={r.model_id}
+                    type="button"
+                    role="tab"
+                    aria-selected={r.model_id === activeModelId}
+                    className={`rail-vert-tab${r.model_id === activeModelId ? " active" : ""}`}
+                    onClick={() => setActiveModelId(r.model_id)}
+                  >
+                    {modelLabels[r.model_id] ?? r.model_id}
+                  </button>
+                ))}
+              </div>
+              <div className="rail-outcome-body">
+                <div className="rail-section rail-section--summary">
+                  <h2>Summary</h2>
+                  {activeRoute && (
+                    <dl className="rail-stat-grid">
+                      <div>
+                        <dt>Distance</dt>
+                        <dd>{activeRoute.distance_nm.toFixed(1)} nm</dd>
+                      </div>
+                      <div>
+                        <dt>ETA</dt>
+                        <dd>
+                          {activeRoute.eta_utc
+                            ? new Date(activeRoute.eta_utc).toUTCString().slice(17, 22) + "Z"
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Legs</dt>
+                        <dd>{activeRoute.legs.length}</dd>
+                      </div>
+                      <div>
+                        <dt>Tacks</dt>
+                        <dd>{activeRoute.n_tacks}</dd>
+                      </div>
+                    </dl>
+                  )}
+                </div>
+
+                {playbackLeg && (
+                  <div className="rail-section rail-section--instruments">
+                    <InstrumentCluster
+                      leg={playbackLeg}
+                      distanceNm={playbackDistanceNm}
+                      variant="rail"
+                    />
+                  </div>
+                )}
+
+                <div className="rail-section rail-section--legs">
+                  <RouteLegTable
+                    route={activeRoute}
+                    currentTimeUtc={overlayTimeUtc}
+                    onSeek={setOverlayTimeUtc}
+                  />
+                </div>
+
+                <div className="rail-outcome-actions">
+                  <button
+                    type="button"
+                    className="rail-reroute-btn"
+                    onClick={exitRouting}
+                  >
+                    Edit route
+                  </button>
+                  <button
+                    type="button"
+                    className="rail-reroute-btn"
+                    disabled={!live || !liveFix || running}
+                    title={
+                      live && liveFix
+                        ? "Rebuild route from your current GPS position"
+                        : "Turn on GPS (top right) to reroute from your location"
+                    }
+                    onClick={handleRerouteFromGps}
+                  >
+                    Reroute from current location
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div
+                className={`rail-section rail-section--bare${
+                  setupOpen.course ? "" : " rail-section--collapsed"
+                }`}
+              >
+                <button
+                  type="button"
+                  className="rail-accordion-head"
+                  onClick={() => toggleSetup("course")}
+                  aria-expanded={setupOpen.course}
+                >
+                  <div className="rail-accordion-titles">
+                    <h2>Course</h2>
+                    {!setupOpen.course && (
+                      <span className="rail-accordion-summary">
+                        {courseCollapsedSummary(course)}
+                      </span>
+                    )}
+                  </div>
+                  <span className="rail-accordion-chevron" aria-hidden>
+                    {setupOpen.course ? "▾" : "▸"}
+                  </span>
+                </button>
+                <div className="rail-accordion-body">
+                  <CourseEditor
+                    course={course}
+                    onCourseChange={setCourse}
+                    editMode={editMode}
+                    onEditMode={setEditMode}
+                    courseReady={courseIsReady(course)}
+                    startSource={startSource}
+                    onStartSource={setStartSource}
+                    gpsAvailable={live && !!liveFix}
+                    onUseGpsStart={handleUseGpsStart}
+                  />
+                </div>
+              </div>
+
+              <div
+                className={`rail-section rail-section--bare${
+                  setupOpen.boat ? "" : " rail-section--collapsed"
+                }`}
+              >
+                <button
+                  type="button"
+                  className="rail-accordion-head"
+                  onClick={() => toggleSetup("boat")}
+                  aria-expanded={setupOpen.boat}
+                >
+                  <div className="rail-accordion-titles">
+                    <h2>Boat</h2>
+                    {!setupOpen.boat && (
+                      <span className="rail-accordion-summary">
+                        {boat.polar_id ? `Polar · ${boat.polar_id}` : "No polar loaded"}
+                      </span>
+                    )}
+                  </div>
+                  <span className="rail-accordion-chevron" aria-hidden>
+                    {setupOpen.boat ? "▾" : "▸"}
+                  </span>
+                </button>
+                <div className="rail-accordion-body">
+                  <BoatConfigPanel
+                    config={boat}
+                    onConfigChange={setBoat}
+                    minDepthM={course.min_depth_m}
+                    onMinDepthChange={(m) => setCourse((c) => ({ ...c, min_depth_m: m }))}
+                  />
+                </div>
+              </div>
+
+              <div
+                className={`rail-section rail-section--bare${
+                  setupOpen.forecasts ? "" : " rail-section--collapsed"
+                }`}
+              >
+                <button
+                  type="button"
+                  className="rail-accordion-head"
+                  onClick={() => toggleSetup("forecasts")}
+                  aria-expanded={setupOpen.forecasts}
+                >
+                  <div className="rail-accordion-titles">
+                    <h2>Forecasts to run</h2>
+                    {!setupOpen.forecasts && (
+                      <span className="rail-accordion-summary">
+                        {selected.size === 0
+                          ? "None selected"
+                          : `${selected.size} selected`}
+                      </span>
+                    )}
+                  </div>
+                  <span className="rail-accordion-chevron" aria-hidden>
+                    {setupOpen.forecasts ? "▾" : "▸"}
+                  </span>
+                </button>
+                <div className="rail-accordion-body">
+                  <ForecastCheckList
+                    models={availableModels}
+                    selected={selected}
+                    onToggle={toggleModel}
+                    apiUp={apiUp}
+                    hasViewport={viewport != null}
+                  />
+                </div>
+              </div>
+
+              <div className="rail-section">
+                <div className="rail-section-head">
+                  <h2>Summary</h2>
+                </div>
+                <RouteReview
+                  course={course}
+                  selected={selected}
+                  models={availableModels}
+                  running={running || routeModal === "error"}
+                  prepState={prepState}
+                  message={routeModal === "hidden" ? runMsg || undefined : undefined}
+                  runDisabledReason={runDisabledReason}
+                  onRun={() => {
+                    void runRoute();
+                  }}
+                />
+              </div>
+            </>
+          )}
+        </aside>
+      )}
+
+      <div className={`map-area${inRouteReview ? " map-area--review" : ""}`}>
+        {sessionHydrated && (
+          <MapView
+            routes={mode === "routing" ? routes : []}
+            course={course}
+            showWind={showWind}
+            showDepth={showDepth}
+            windTimeUtc={routes.length > 0 && mode === "routing" ? scrubHourUtc : overlayTimeUtc}
+            windSeries={windSeries}
+            playbackPosition={mode === "routing" ? playbackPosition : null}
+            playbackHeading={mode === "routing" ? playbackHeading : null}
+            livePosition={live && liveFix ? liveFix.position : null}
+            liveHeading={liveFix?.headingDeg ?? null}
+            planPosition={live && planNow && mode === "routing" ? planNow.position : null}
+            planHeading={live && planNow && mode === "routing" ? planNow.heading : null}
+            fitRouteKey={fitRouteKey}
+            initialBounds={mapBootBounds}
+            editMode={mode === "routing" ? editMode : "none"}
+            onMapClick={
+              mode === "routing" && editMode !== "none" && startSource === "point"
+                ? handleMapClick
+                : mode === "routing" && editMode !== "none" && editMode !== "start"
+                  ? handleMapClick
+                  : undefined
+            }
+            onRouteSelect={setActiveModelId}
+            onRouteSeek={(id, t) => {
+              setActiveModelId(id);
+              setOverlayTimeUtc(t);
+            }}
+            onCoursePointMove={(kind, index, lat, lon) => {
+              if (kind === "start" && startSource === "location") return;
+              setCourse((c) => {
+                if (kind === "start") return { ...c, start: [lat, lon] };
+                if (kind === "finish") return { ...c, finish: [lat, lon] };
+                if (kind === "mark" && index != null) {
+                  return {
+                    ...c,
+                    marks: c.marks.map((mk, i) =>
+                      i === index ? { ...mk, position: [lat, lon] } : mk,
+                    ),
+                  };
+                }
+                return c;
+              });
+            }}
+            onOverlayError={setOverlayMsg}
+            onViewportChange={handleViewportChange}
+            onBootReady={() => setMapBooted(true)}
+          />
+        )}
+
+        {mapBooted && (
+          <>
+            <div className="map-chrome-top-left">
+              <BrowseTimeDock
+                showModels={mode === "basic"}
+                models={availableModels}
+                selectedModels={selected}
+                activeModelId={activeModelId}
+                onActiveModel={setActiveModelId}
+                onSelectModel={(id) => {
+                  if (mode === "basic") {
+                    setSelected(new Set([id]));
+                    setActiveModelId(id);
+                    return;
+                  }
+                  if (!selected.has(id)) toggleModel(id);
+                }}
+                overlayStatus={overlayStatus}
+                overlayTimeUtc={overlayTimeUtc}
+                onTime={(t) => {
+                  setLiveFollowNow(false);
+                  setOverlayTimeUtc(t);
+                }}
+                horizonStartUtc={horizonStartUtc}
+                horizonEndUtc={
+                  mode === "routing" && inRouteReview ? routeHorizonEndUtc : horizonEndUtc
+                }
+                loading={windLoading && !(mode === "routing" && inRouteReview)}
+                routeActive={mode === "routing" && inRouteReview}
+                playUntilUtc={activeRoute?.eta_utc ?? null}
+                legs={activeRoute?.legs ?? null}
+                distanceNm={playbackDistanceNm}
+              />
+            </div>
+
+            {mode === "basic" && (
+              <div className="map-chrome-top-center">
+                <button
+                  type="button"
+                  className="map-planner-route-btn"
+                  onClick={() => router.push("/route")}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+                    <path
+                      d="M12 4.5v2.2M12 17.3v2.2M4.5 12h2.2M17.3 12h2.2"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
+                    <path d="M12 7.2l2.4 4.8-2.4 1.2-2.4-1.2L12 7.2z" fill="currentColor" />
+                    <path
+                      d="M12 16.8l-2.4-4.8 2.4-1.2 2.4 1.2-2.4 4.8z"
+                      fill="currentColor"
+                      opacity="0.35"
+                    />
+                  </svg>
+                  Route planner
+                </button>
+              </div>
+            )}
+
+            {activeError && <div className="map-error-banner">{activeError}</div>}
+            <MapIconControls
+              toggles={{ showWind, showDepth }}
+              terrain={windNinjaOpt}
+              terrainDisabled={mode === "routing" && inRouteReview}
+              onTerrain={applyTerrain}
+              gpsOn={live}
+              onGpsChange={(on) => {
+                setLive(on);
+                if (on) setLiveFollowNow(true);
+              }}
+              onChange={(patch) => {
+                if (patch.showWind !== undefined) setShowWind(patch.showWind);
+                if (patch.showDepth !== undefined) setShowDepth(patch.showDepth);
+              }}
             />
-            <ForecastDropdown
-              models={availableModels}
-              selected={selected}
-              onToggle={toggleModel}
-              apiUp={apiUp}
-              hasViewport={viewport != null}
-            />
+            <div className="map-chrome-bottom-right">
+              <WindLegend visible={showWind && !!windSeries} />
+            </div>
+          </>
+        )}
+
+        {!mapBooted && (
+          <div className="map-boot-overlay" aria-busy="true" aria-label="Loading chart">
+            <div className="map-load-card">
+              <span className="map-load-spin" aria-hidden />
+              <div className="map-load-copy">
+                <div className="map-load-title">Loading chart</div>
+                <div className="map-load-sub">
+                  {mapBootBounds ? "Framing your course…" : "Preparing the map…"}
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
 
-      <RouteDetailPanel
-        routes={routes}
-        routeIndex={displayRouteIndex}
-        currentTimeUtc={overlayTimeUtc}
-        open={detailOpen}
-        onToggle={() => setDetailOpen((o) => !o)}
-        onRouteIndex={(i) => {
-          setRouteIndex(i);
-          if (routes[i]) setActiveModelId(routes[i].model_id);
-        }}
-        onSeek={setOverlayTimeUtc}
-        modelLabels={Object.fromEntries(availableModels.map((m) => [m.id, m.label]))}
-      />
     </div>
   );
 }

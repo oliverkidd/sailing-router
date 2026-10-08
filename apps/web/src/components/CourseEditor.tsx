@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Course, Mark } from "@/lib/types";
 import { isPointSet, withSequentialMarkNames } from "@/lib/mapOverlays";
 import {
@@ -12,29 +12,91 @@ import {
 } from "@/lib/coords";
 
 export type EditMode = "none" | "start" | "finish" | "mark";
+export type StartSource = "point" | "location";
 
-function MarkDisc({
-  kind,
-  label,
-}: {
-  kind: "start" | "finish" | "mark";
-  label: string;
-}) {
-  return (
-    <span className={`course-mark-disc ${kind}`} aria-hidden>
-      {label}
-    </span>
-  );
+const DEFAULT_MARK: Omit<Mark, "position"> = {
+  radius_nm: 0.05,
+  rounding: "port",
+  name: null,
+};
+
+/** Collapsed accordion summary for Course. */
+export function courseCollapsedSummary(course: Course): string {
+  const startOk = isPointSet(course.start);
+  if (!startOk) return "No points yet";
+  const finishOk = isPointSet(course.finish);
+  const n = course.marks.filter((m) => isPointSet(m.position)).length;
+  const parts = ["Start"];
+  if (n > 0) parts.push(`${n} mark${n === 1 ? "" : "s"}`);
+  if (finishOk) parts.push("Finish");
+  else if (n > 0) parts.push("Finish = last mark");
+  return parts.join(" · ");
 }
 
-function reorderPreview(marks: Mark[], from: number, to: number): Mark[] {
-  if (from === to || from < 0 || to < 0 || from >= marks.length || to >= marks.length) {
-    return marks;
-  }
-  const next = [...marks];
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  return next;
+function TypeSelect({
+  kind,
+  label,
+  open,
+  onToggle,
+  options,
+  onPick,
+  locked,
+}: {
+  kind: "start" | "mark" | "finish";
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  options: { value: "mark" | "finish"; label: string }[];
+  onPick: (k: "mark" | "finish") => void;
+  locked?: boolean;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) onToggle();
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open, onToggle]);
+
+  return (
+    <div className="course-type-wrap" ref={menuRef}>
+      <button
+        type="button"
+        className={`course-type ${kind}${open ? " open" : ""}${locked ? " locked" : ""}`}
+        aria-haspopup={locked ? undefined : "listbox"}
+        aria-expanded={locked ? undefined : open}
+        title={locked ? label : "Change type"}
+        disabled={locked}
+        onClick={() => {
+          if (!locked) onToggle();
+        }}
+      >
+        <span className="course-type-label">{label}</span>
+        {!locked && <span className="course-type-caret" aria-hidden />}
+      </button>
+      {open && !locked && (
+        <div className="course-type-menu" role="listbox">
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="option"
+              aria-selected={o.value === kind}
+              className={o.value === kind ? "active" : ""}
+              onClick={() => {
+                onPick(o.value);
+                onToggle();
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function CourseEditor({
@@ -42,26 +104,36 @@ export default function CourseEditor({
   onCourseChange,
   editMode,
   onEditMode,
-  courseReady,
+  startSource = "point",
+  onStartSource,
+  gpsAvailable = false,
+  onUseGpsStart,
 }: {
   course: Course;
   onCourseChange: (c: Course) => void;
   editMode: EditMode;
   onEditMode: (m: EditMode) => void;
   courseReady?: boolean;
+  startSource?: StartSource;
+  onStartSource?: (source: StartSource) => void;
+  gpsAvailable?: boolean;
+  onUseGpsStart?: () => void;
 }) {
   const startSet = isPointSet(course.start);
   const finishSet = isPointSet(course.finish);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [overIndex, setOverIndex] = useState<number | null>(null);
-  const dragIndexRef = useRef<number | null>(null);
+  const [startMenu, setStartMenu] = useState(false);
+  const [openType, setOpenType] = useState<string | null>(null);
 
-  const toggleMode = (mode: EditMode) => {
-    onEditMode(editMode === mode ? "none" : mode);
-  };
+  const pendingMarkIdx = course.marks.findIndex((m) => !isPointSet(m.position));
+  const hasPendingMark = pendingMarkIdx >= 0;
+  const startPending = editMode === "start" && !startSet && startSource === "point";
+  const gpsWaiting = startSource === "location" && !startSet;
+  const showStartRow = startSet || startPending || gpsWaiting;
 
   const clearStart = () => {
     onCourseChange({ ...course, start: [0, 0] });
+    onStartSource?.("point");
+    setStartMenu(false);
     if (editMode === "start") onEditMode("none");
   };
 
@@ -75,6 +147,8 @@ export default function CourseEditor({
       ...course,
       marks: withSequentialMarkNames(course.marks.filter((_, i) => i !== index)),
     });
+    if (editMode === "mark" && pendingMarkIdx === index) onEditMode("none");
+    setOpenType(null);
   };
 
   const updateStart = (lat: number, lon: number) => {
@@ -97,265 +171,280 @@ export default function CourseEditor({
     });
   };
 
-  const reorderMarks = (from: number, to: number) => {
-    if (from === to || from < 0 || to < 0) return;
+  const promoteMarkToFinish = (index: number) => {
+    const mk = course.marks[index];
+    if (!mk || !isPointSet(mk.position)) return;
+    const rest = course.marks.filter((_, i) => i !== index);
+    const nextMarks = finishSet
+      ? withSequentialMarkNames([
+          ...rest,
+          { ...DEFAULT_MARK, position: course.finish },
+        ])
+      : withSequentialMarkNames(rest);
     onCourseChange({
       ...course,
-      marks: withSequentialMarkNames(reorderPreview(course.marks, from, to)),
+      finish: mk.position,
+      marks: nextMarks,
+    });
+    onEditMode("none");
+    setOpenType(null);
+  };
+
+  const demoteFinishToMark = () => {
+    if (!finishSet) return;
+    onCourseChange({
+      ...course,
+      finish: [0, 0],
+      marks: withSequentialMarkNames([
+        ...course.marks,
+        { ...DEFAULT_MARK, position: course.finish },
+      ]),
+    });
+    setOpenType(null);
+  };
+
+  const chooseGpsStart = () => {
+    setStartMenu(false);
+    onStartSource?.("location");
+    onEditMode("none");
+    onUseGpsStart?.();
+  };
+
+  const chooseMapStart = () => {
+    setStartMenu(false);
+    onStartSource?.("point");
+    onEditMode("start");
+  };
+
+  const addMark = () => {
+    if (!startSet || hasPendingMark) return;
+    onCourseChange({
+      ...course,
+      marks: withSequentialMarkNames([
+        ...course.marks,
+        { ...DEFAULT_MARK, position: [0, 0] },
+      ]),
+    });
+    onEditMode("mark");
+  };
+
+  /** Display index among marks+finish sequence for labels M1, M2… */
+  const markLabel = (index: number) => `M${index + 1}`;
+
+  const departDate = course.depart_utc.slice(0, 10);
+  const departTime = course.depart_utc.slice(11, 16);
+
+  const setDepartPart = (date: string, time: string) => {
+    if (!date || !time) return;
+    onCourseChange({
+      ...course,
+      depart_utc: new Date(`${date}T${time}:00.000Z`).toISOString(),
     });
   };
 
-  const previewMarks = useMemo(() => {
-    if (dragIndex == null || overIndex == null) return course.marks;
-    return reorderPreview(course.marks, dragIndex, overIndex);
-  }, [course.marks, dragIndex, overIndex]);
-
-  const previewSourceIndex = useMemo(() => {
-    if (dragIndex == null || overIndex == null) {
-      return course.marks.map((_, i) => i);
-    }
-    const idxs = course.marks.map((_, i) => i);
-    const [moved] = idxs.splice(dragIndex, 1);
-    idxs.splice(overIndex, 0, moved);
-    return idxs;
-  }, [course.marks, dragIndex, overIndex]);
-
-  const showList = startSet || finishSet || course.marks.length > 0;
-
   return (
-    <div className="course-editor">
-      {!courseReady && (
-        <div className="course-editor-hint">
-          Click <strong>Set start</strong> then <strong>Set finish</strong> on the map to define your course.
+    <div className="course-editor course-editor--flat">
+      <div className="course-flat-row course-depart-row">
+        <span className="course-depart-label">Dep</span>
+        <div className="course-flat-main">
+          <div className="course-coord-line">
+            <div className="course-coord-group course-depart-date">
+              <input
+                type="date"
+                value={departDate}
+                aria-label="Depart date UTC"
+                onChange={(e) => setDepartPart(e.target.value, departTime)}
+              />
+            </div>
+            <span className="course-coord-sep" aria-hidden />
+            <div className="course-coord-group course-depart-time">
+              <input
+                type="time"
+                value={departTime}
+                aria-label="Depart time UTC"
+                onChange={(e) => setDepartPart(departDate, e.target.value)}
+              />
+            </div>
+          </div>
         </div>
-      )}
-
-      <div className="course-editor-actions">
-        <button
-          type="button"
-          className={`course-editor-btn${editMode === "start" ? " active" : ""}`}
-          disabled={startSet}
-          onClick={() => toggleMode("start")}
-          title={startSet ? "Start already set — remove it to set again" : "Set start on map"}
-        >
-          <MarkDisc kind="start" label="S" />
-          Set start
-        </button>
-        <button
-          type="button"
-          className={`course-editor-btn${editMode === "finish" ? " active" : ""}`}
-          disabled={finishSet}
-          onClick={() => toggleMode("finish")}
-          title={finishSet ? "Finish already set — remove it to set again" : "Set finish on map"}
-        >
-          <MarkDisc kind="finish" label="F" />
-          Set finish
-        </button>
-        <button
-          type="button"
-          className={`course-editor-btn${editMode === "mark" ? " active" : ""}`}
-          onClick={() => toggleMode("mark")}
-          title="Add a mark on the map"
-        >
-          <MarkDisc kind="mark" label="+" />
-          Mark
-        </button>
       </div>
 
-      {editMode !== "none" && (
-        <div className="course-editor-hint">
-          Click the map to {editMode === "mark" ? "add a mark" : `set the ${editMode}`}.
-        </div>
-      )}
+      <div className="course-flat-list">
+        {!showStartRow && (
+          <div className="course-add-block">
+            {!startMenu ? (
+              <button
+                type="button"
+                className="course-add-row"
+                onClick={() => setStartMenu(true)}
+              >
+                <span className="course-add-plus" aria-hidden>
+                  +
+                </span>
+                Add start
+              </button>
+            ) : (
+              <div className="course-start-choice">
+                <div className="course-start-choice-label">Start from</div>
+                <button type="button" onClick={chooseGpsStart}>
+                  GPS current location
+                </button>
+                <button type="button" onClick={chooseMapStart}>
+                  Map point
+                </button>
+                <button
+                  type="button"
+                  className="course-start-cancel"
+                  onClick={() => setStartMenu(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
-      {showList && (
-        <div className="course-point-list">
-          {startSet && (
-            <PointRow
-              disc={<MarkDisc kind="start" label="S" />}
-              lat={course.start[0]}
-              lon={course.start[1]}
-              editable
-              pinned
-              onCoordsChange={updateStart}
-              onRemove={clearStart}
-              removeLabel="Remove start"
+        {showStartRow && (
+          <div
+            className={`course-flat-row${startPending || gpsWaiting ? " pending" : ""}`}
+          >
+            <TypeSelect
+              kind="start"
+              label={startSource === "location" ? "GPS" : "S"}
+              locked
+              open={false}
+              onToggle={() => {}}
+              options={[]}
+              onPick={() => {}}
             />
-          )}
+            <div className="course-flat-main">
+              {startPending ? (
+                <span className="course-pending-slot">Click on map…</span>
+              ) : gpsWaiting ? (
+                <span className="course-pending-slot">
+                  {gpsAvailable ? "Acquiring fix…" : "Waiting for GPS…"}
+                </span>
+              ) : (
+                <CoordLine
+                  lat={course.start[0]}
+                  lon={course.start[1]}
+                  onChange={updateStart}
+                />
+              )}
+            </div>
+            <button
+              type="button"
+              className="course-flat-remove"
+              aria-label="Remove start"
+              onClick={clearStart}
+            >
+              ×
+            </button>
+          </div>
+        )}
 
-          {previewMarks.map((mk, previewIdx) => {
-            const sourceIdx = previewSourceIndex[previewIdx] ?? previewIdx;
-            const isDragging = dragIndex === sourceIdx;
-            return (
-              <PointRow
-                key={`mark-${sourceIdx}`}
-                disc={<MarkDisc kind="mark" label={String(previewIdx + 1)} />}
-                lat={mk.position[0]}
-                lon={mk.position[1]}
-                editable
-                onCoordsChange={(lat, lon) => updateMarkPosition(sourceIdx, lat, lon)}
-                draggable
-                dragging={isDragging}
-                onRemove={() => removeMark(sourceIdx)}
-                removeLabel={`Remove mark ${previewIdx + 1}`}
-                onDragStart={() => {
-                  dragIndexRef.current = sourceIdx;
-                  setDragIndex(sourceIdx);
-                  setOverIndex(previewIdx);
-                }}
-                onDragOver={() => setOverIndex(previewIdx)}
-                onDrop={() => {
-                  const from = dragIndexRef.current;
-                  if (from != null) reorderMarks(from, previewIdx);
-                  dragIndexRef.current = null;
-                  setDragIndex(null);
-                  setOverIndex(null);
-                }}
-                onDragEnd={() => {
-                  dragIndexRef.current = null;
-                  setDragIndex(null);
-                  setOverIndex(null);
+        {course.marks.map((mk, index) => {
+          const pending = !isPointSet(mk.position);
+          const key = `mark-${index}`;
+          return (
+            <div
+              key={key}
+              className={`course-flat-row${pending ? " pending" : ""}`}
+            >
+              <TypeSelect
+                kind="mark"
+                label={markLabel(index)}
+                open={openType === key}
+                onToggle={() =>
+                  setOpenType((cur) => (cur === key ? null : key))
+                }
+                options={[
+                  { value: "mark", label: "Mark" },
+                  { value: "finish", label: "Finish" },
+                ]}
+                onPick={(k) => {
+                  if (k === "finish") promoteMarkToFinish(index);
                 }}
               />
-            );
-          })}
+              <div className="course-flat-main">
+                {pending ? (
+                  <span className="course-pending-slot">Click on map…</span>
+                ) : (
+                  <CoordLine
+                    lat={mk.position[0]}
+                    lon={mk.position[1]}
+                    onChange={(lat, lon) => updateMarkPosition(index, lat, lon)}
+                  />
+                )}
+              </div>
+              <button
+                type="button"
+                className="course-flat-remove"
+                aria-label={`Remove ${markLabel(index)}`}
+                onClick={() => removeMark(index)}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
 
-          {finishSet && (
-            <PointRow
-              disc={<MarkDisc kind="finish" label="F" />}
-              lat={course.finish[0]}
-              lon={course.finish[1]}
-              editable
-              pinned
-              onCoordsChange={updateFinish}
-              onRemove={clearFinish}
-              removeLabel="Remove finish"
+        {finishSet && (
+          <div className="course-flat-row">
+            <TypeSelect
+              kind="finish"
+              label="F"
+              open={openType === "finish"}
+              onToggle={() =>
+                setOpenType((cur) => (cur === "finish" ? null : "finish"))
+              }
+              options={[
+                { value: "finish", label: "Finish" },
+                { value: "mark", label: "Mark" },
+              ]}
+              onPick={(k) => {
+                if (k === "mark") demoteFinishToMark();
+              }}
             />
-          )}
-        </div>
-      )}
+            <div className="course-flat-main">
+              <CoordLine
+                lat={course.finish[0]}
+                lon={course.finish[1]}
+                onChange={updateFinish}
+              />
+            </div>
+            <button
+              type="button"
+              className="course-flat-remove"
+              aria-label="Remove finish"
+              onClick={clearFinish}
+            >
+              ×
+            </button>
+          </div>
+        )}
 
-      <label
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "3px 0",
-          color: "var(--muted)",
-        }}
-      >
-        Depart (UTC)
-        <input
-          type="datetime-local"
-          value={course.depart_utc.slice(0, 16)}
-          onChange={(e) =>
-            onCourseChange({ ...course, depart_utc: new Date(e.target.value + "Z").toISOString() })
-          }
-          style={{
-            background: "#0b1220",
-            color: "var(--text)",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            padding: "3px 5px",
-          }}
-        />
-      </label>
-      <div className="course-editor-footer">Course auto-saves in this browser.</div>
+        {startSet && !hasPendingMark && !startPending && (
+          <button type="button" className="course-add-row" onClick={addMark}>
+            <span className="course-add-plus" aria-hidden>
+              +
+            </span>
+            Add mark
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-function PointRow({
-  disc,
+function CoordLine({
   lat,
   lon,
-  editable = false,
-  pinned = false,
-  draggable = false,
-  dragging = false,
-  onRemove,
-  removeLabel,
-  onCoordsChange,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
-}: {
-  disc: React.ReactNode;
-  lat?: number;
-  lon?: number;
-  editable?: boolean;
-  pinned?: boolean;
-  draggable?: boolean;
-  dragging?: boolean;
-  onRemove: () => void;
-  removeLabel: string;
-  onCoordsChange?: (lat: number, lon: number) => void;
-  onDragStart?: () => void;
-  onDragOver?: () => void;
-  onDrop?: () => void;
-  onDragEnd?: () => void;
-}) {
-  return (
-    <div
-      className={["course-point-row", dragging ? "dragging" : ""].filter(Boolean).join(" ")}
-      draggable={draggable}
-      onDragStart={(e) => {
-        if (!draggable) return;
-        const t = e.target as HTMLElement;
-        if (t.tagName === "INPUT" || t.tagName === "SELECT") {
-          e.preventDefault();
-          return;
-        }
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", "mark");
-        onDragStart?.();
-      }}
-      onDragOver={(e) => {
-        if (!draggable) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        onDragOver?.();
-      }}
-      onDrop={(e) => {
-        if (!draggable) return;
-        e.preventDefault();
-        onDrop?.();
-      }}
-      onDragEnd={() => onDragEnd?.()}
-    >
-      <span
-        className={`course-point-handle${pinned ? " pinned" : ""}`}
-        aria-hidden={!draggable}
-        title={draggable ? "Drag to reorder" : undefined}
-      >
-        ⋮⋮
-      </span>
-      {disc}
-      {editable && lat != null && lon != null && onCoordsChange ? (
-        <CoordEditors lat={lat} lon={lon} onCoordsChange={onCoordsChange} />
-      ) : null}
-      <button
-        type="button"
-        className="course-point-remove"
-        onClick={onRemove}
-        aria-label={removeLabel}
-        title={removeLabel}
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-function CoordEditors({
-  lat,
-  lon,
-  onCoordsChange,
+  onChange,
 }: {
   lat: number;
   lon: number;
-  onCoordsChange: (lat: number, lon: number) => void;
+  onChange: (lat: number, lon: number) => void;
 }) {
   const latParts = decimalToDm(lat, "lat");
   const lonParts = decimalToDm(lon, "lon");
@@ -366,7 +455,6 @@ function CoordEditors({
   const [lonDeg, setLonDeg] = useState(String(lonParts.deg));
   const [lonMin, setLonMin] = useState(formatMin(lonParts.min));
   const [lonHem, setLonHem] = useState<HemEW>(lonParts.hem as HemEW);
-
   const focused = useRef(false);
 
   useEffect(() => {
@@ -405,7 +493,7 @@ function CoordEditors({
       { deg: parseInt(loDeg, 10) || 0, min: parseFloat(loMin) || 0, hem: loHem },
       "lon",
     );
-    onCoordsChange(nextLat, nextLon);
+    onChange(nextLat, nextLon);
 
     const la = decimalToDm(nextLat, "lat");
     const lo = decimalToDm(nextLon, "lon");
@@ -422,123 +510,90 @@ function CoordEditors({
   };
 
   return (
-    <span className="course-point-coords-edit">
-      <span className="course-point-dm">
+    <div
+      className="course-coord-line"
+      onFocus={() => {
+        focused.current = true;
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) commit();
+      }}
+    >
+      <div className="course-coord-group" role="group" aria-label="Latitude">
         <input
           type="number"
           min={0}
           max={90}
           step={1}
-          className="course-point-coord-input course-point-deg"
+          className="course-coord-deg d"
           value={latDeg}
           aria-label="Latitude degrees"
-          title="Latitude degrees"
-          onFocus={() => {
-            focused.current = true;
-          }}
           onChange={(e) => setLatDeg(e.target.value)}
-          onBlur={() => commit()}
           onKeyDown={onEnterBlur}
-          onMouseDown={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.preventDefault()}
         />
-        <span className="course-point-coord-unit">°</span>
         <input
           type="number"
           min={0}
           max={59.999}
           step={0.001}
-          className="course-point-coord-input course-point-min"
+          className="course-coord-min"
           value={latMin}
           aria-label="Latitude minutes"
-          title="Latitude minutes"
-          onFocus={() => {
-            focused.current = true;
-          }}
           onChange={(e) => setLatMin(e.target.value)}
-          onBlur={() => commit()}
           onKeyDown={onEnterBlur}
-          onMouseDown={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.preventDefault()}
         />
-        <span className="course-point-coord-unit">′</span>
         <select
-          className="course-point-hem"
+          className="course-coord-hem"
           value={latHem}
           aria-label="Latitude hemisphere"
-          onFocus={() => {
-            focused.current = true;
-          }}
           onChange={(e) => {
             const hem = e.target.value as HemNS;
             setLatHem(hem);
             commit({ latHem: hem });
           }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.preventDefault()}
         >
           <option value="N">N</option>
           <option value="S">S</option>
         </select>
-      </span>
-      <span className="course-point-dm">
+      </div>
+      <span className="course-coord-sep" aria-hidden />
+      <div className="course-coord-group" role="group" aria-label="Longitude">
         <input
           type="number"
           min={0}
           max={180}
           step={1}
-          className="course-point-coord-input course-point-deg-lon"
+          className="course-coord-deg e"
           value={lonDeg}
           aria-label="Longitude degrees"
-          title="Longitude degrees"
-          onFocus={() => {
-            focused.current = true;
-          }}
           onChange={(e) => setLonDeg(e.target.value)}
-          onBlur={() => commit()}
           onKeyDown={onEnterBlur}
-          onMouseDown={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.preventDefault()}
         />
-        <span className="course-point-coord-unit">°</span>
         <input
           type="number"
           min={0}
           max={59.999}
           step={0.001}
-          className="course-point-coord-input course-point-min"
+          className="course-coord-min"
           value={lonMin}
           aria-label="Longitude minutes"
-          title="Longitude minutes"
-          onFocus={() => {
-            focused.current = true;
-          }}
           onChange={(e) => setLonMin(e.target.value)}
-          onBlur={() => commit()}
           onKeyDown={onEnterBlur}
-          onMouseDown={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.preventDefault()}
         />
-        <span className="course-point-coord-unit">′</span>
         <select
-          className="course-point-hem"
+          className="course-coord-hem"
           value={lonHem}
           aria-label="Longitude hemisphere"
-          onFocus={() => {
-            focused.current = true;
-          }}
           onChange={(e) => {
             const hem = e.target.value as HemEW;
             setLonHem(hem);
             commit({ lonHem: hem });
           }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onDragStart={(e) => e.preventDefault()}
         >
           <option value="E">E</option>
           <option value="W">W</option>
         </select>
-      </span>
-    </span>
+      </div>
+    </div>
   );
 }

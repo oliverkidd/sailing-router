@@ -47,6 +47,11 @@ CLEARANCE_BIAS_SPAN = 3.0
 WIDE_CORRIDOR_FACTOR = 4.0
 # Each pass splits every blocked span once, so obstacles clear geometrically.
 REFINE_PASSES = 4
+# Extra depth (m) above the router's hard min+margin for the advisory chain.
+# Without this the A* corridor treats the Bembridge 4.5 m shelf as open water
+# (clearance is huge across a wide shoal) and the router aims into the contour
+# that then thrashes. Start/goal cells are still forced open below.
+WAYPOINT_DEPTH_BUFFER_M = 1.0
 
 _NEIGHBOURS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
 
@@ -225,7 +230,10 @@ def _corridor_grid(
     # fetch.py already stores land / NaN / nodata as 0.0, so the depth threshold
     # covers shoals *and* most land; the land polygons are the authority for
     # coastline shape, so rasterise them too rather than trusting the raster.
-    threshold = geo.min_depth_m + geo.depth_safety_margin_m
+    # Buffer keeps advisory waypoints off barely-legal shelves (see constant).
+    threshold = (
+        geo.min_depth_m + geo.depth_safety_margin_m + WAYPOINT_DEPTH_BUFFER_M
+    )
     navigable = np.isfinite(d) & (d >= threshold)
     lon_mesh, lat_mesh = np.meshgrid(lons, lats)
     if not geo.land.is_empty:

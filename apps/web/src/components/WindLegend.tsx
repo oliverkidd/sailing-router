@@ -26,11 +26,10 @@ export default function WindLegend({ visible }: { visible: boolean }) {
             className="wind-legend-tick"
             style={{ left: `${(kn / WIND_SPEED_MAX_KN) * 100}%` }}
           >
-            {kn}
+            {kn === 0 || kn === 60 ? `${kn} knts` : kn}
           </span>
         ))}
       </div>
-      <div className="wind-legend-unit">knots</div>
     </div>
   );
 }

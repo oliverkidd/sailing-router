@@ -89,9 +89,22 @@ export function routeScrubStopsMs(legs: RouteLeg[]): number[] {
   return [...stops].sort((x, y) => x - y);
 }
 
+/** Strictly increasing timestamps along the route (marks share arrival time). */
+function distinctLegTimesMs(legs: RouteLeg[]): number[] {
+  const out: number[] = [];
+  let prev = NaN;
+  for (const leg of legs) {
+    const t = new Date(leg.t_utc).getTime();
+    if (t === prev) continue;
+    out.push(t);
+    prev = t;
+  }
+  return out;
+}
+
 /**
- * Arrow-key step: always walk the precomputed stop list for the whole route
- * (next/prev stop; speed skips that many stops).
+ * Arrow-key step across distinct leg times. Mark nodes reuse the arrival
+ * timestamp, so index±1 can be a 0ms delta — skip those duplicates.
  */
 export function arrowScrubDeltaMs(
   legs: RouteLeg[] | null | undefined,
@@ -99,37 +112,37 @@ export function arrowScrubDeltaMs(
   direction: 1 | -1,
   speed: number,
 ): number {
-  const defaultDelta = direction * FIVE_MIN_MS * Math.max(1, speed);
+  const stepCount = Math.max(1, Math.floor(speed));
+  const defaultDelta = direction * FIVE_MIN_MS * stepCount;
   if (!legs || legs.length < 2) return defaultDelta;
 
-  const stops = routeScrubStopsMs(legs);
-  if (stops.length < 2) return defaultDelta;
+  const times = distinctLegTimesMs(legs);
+  if (times.length < 2) return defaultDelta;
 
-  const stepCount = Math.max(1, Math.floor(speed));
   const cur = Math.round(curMs);
 
   if (direction > 0) {
     let idx = -1;
-    for (let i = 0; i < stops.length; i++) {
-      if (stops[i] > cur) {
+    for (let i = 0; i < times.length; i++) {
+      if (times[i] > cur) {
         idx = i;
         break;
       }
     }
     if (idx < 0) return 0;
-    const target = stops[Math.min(stops.length - 1, idx + stepCount - 1)];
+    const target = times[Math.min(times.length - 1, idx + stepCount - 1)];
     return target - cur;
   }
 
   let idx = -1;
-  for (let i = stops.length - 1; i >= 0; i--) {
-    if (stops[i] < cur) {
+  for (let i = times.length - 1; i >= 0; i--) {
+    if (times[i] < cur) {
       idx = i;
       break;
     }
   }
   if (idx < 0) return 0;
-  const target = stops[Math.max(0, idx - (stepCount - 1))];
+  const target = times[Math.max(0, idx - (stepCount - 1))];
   return target - cur;
 }
 
@@ -181,6 +194,8 @@ export default function TimeScrubber({
   legs = null,
   playUntilUtc = null,
   distanceNm = 0,
+  subtitle,
+  showEmbeddedInstruments = true,
 }: {
   overlayTimeUtc: string;
   onTime: (iso: string) => void;
@@ -194,6 +209,10 @@ export default function TimeScrubber({
   /** When set, autoplay stops at this time (e.g. route ETA). */
   playUntilUtc?: string | null;
   distanceNm?: number;
+  /** Optional second line under the clock (browse mode). */
+  subtitle?: string;
+  /** When false, instruments are rendered elsewhere (e.g. top-center banner). */
+  showEmbeddedInstruments?: boolean;
 }) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<PlaySpeed>(1);
@@ -356,42 +375,15 @@ export default function TimeScrubber({
         <div className="time-nav-label">
           <div className="time-nav-datetime">
             {loading && <span className="time-nav-spin" aria-hidden />}
-            {loading ? "Loading forecast…" : `${hour} · ${day}`}
+            {`${hour} · ${day}`}
           </div>
-          {!loading && etaLabel && (
+          {etaLabel ? (
             <div className="time-nav-eta">
               Finish {etaLabel.hour} · {etaLabel.day}
             </div>
-          )}
-          {routeActive && (
-            <div className="time-nav-play-row">
-              <button
-                type="button"
-                className="time-nav-play"
-                onClick={togglePlay}
-                disabled={atPlayEnd && !playing}
-                aria-label={playing ? "Pause route playback" : "Play route playback"}
-                title={playing ? "Pause" : "Play"}
-              >
-                {playing ? (
-                  <span className="time-nav-pause-icon" aria-hidden />
-                ) : (
-                  <span className="time-nav-play-icon" aria-hidden />
-                )}
-              </button>
-              {hasPlayed && (
-                <button
-                  type="button"
-                  className="time-nav-speed"
-                  onClick={cycleSpeed}
-                  aria-label={`Playback speed ${speed}x`}
-                  title="Cycle playback speed"
-                >
-                  {speed}x
-                </button>
-              )}
-            </div>
-          )}
+          ) : subtitle ? (
+            <div className="time-nav-eta">{subtitle}</div>
+          ) : null}
         </div>
 
         <button
@@ -416,7 +408,39 @@ export default function TimeScrubber({
         </button>
       </div>
 
-      {leg && <InstrumentCluster leg={leg} embedded distanceNm={distanceNm} />}
+      {routeActive && (
+        <div className="time-nav-playback">
+          <button
+            type="button"
+            className="time-nav-play"
+            onClick={togglePlay}
+            disabled={atPlayEnd && !playing}
+            aria-label={playing ? "Pause route playback" : "Play route playback"}
+            title={playing ? "Pause" : "Play"}
+          >
+            {playing ? (
+              <span className="time-nav-pause-icon" aria-hidden />
+            ) : (
+              <span className="time-nav-play-icon" aria-hidden />
+            )}
+          </button>
+          {hasPlayed && (
+            <button
+              type="button"
+              className="time-nav-speed"
+              onClick={cycleSpeed}
+              aria-label={`Playback speed ${speed}x`}
+              title="Cycle playback speed"
+            >
+              {speed}x
+            </button>
+          )}
+        </div>
+      )}
+
+      {showEmbeddedInstruments && leg && (
+        <InstrumentCluster leg={leg} embedded distanceNm={distanceNm} />
+      )}
     </div>
   );
 }

@@ -56,6 +56,8 @@ class Node:
     hazard_cost: float = 0.0  # always 0; kept for RouteLeg schema compat
     rethink: bool = False  # next expand re-seeds from mark bearing
     guide_idx: int = 0  # index into the leg's waypoint chain; never goes back
+    # Memo for _guide within one expand (pos + guide_idx → point).
+    _guide_memo: tuple[float, float, int, float, float] | None = None
 
     @property
     def pos(self) -> tuple[float, float]:
@@ -107,6 +109,16 @@ class RouterParams:
     # 1 nm was short enough for Solent forecast beats to flip every board.
     tack_lockout_nm: float = 2.0
     tack_shore_probe_nm: float = 0.8
+    # Look-ahead: how far (nm) to compare held vs opposite board sea-room.
+    # Oversail = this board runs out of deep water first while the other still
+    # has channel — not "never sail shallow" (both boards short → allow).
+    board_room_lookout_nm: float = 2.0
+    # Depth (m) treated as the edge of sea-room when we are still in deep water.
+    # Once already shallower than this, only the hard geo block counts.
+    board_room_depth_m: float = 6.0
+    # Opposite board must beat held clear-water by at least this (nm) to count
+    # as the longer board (filters parallel channel shores).
+    board_room_margin_nm: float = 0.3
     # Discard headings that increase chain-rem (sailing away from the aim)
     # when the mark is not blocked — stops the eastbound spike on a west beat.
     progress_probe_nm: float = 0.8
@@ -286,10 +298,70 @@ class IsochroneRouter:
         self._guide_suffix_nm: list[float] = []
         self._guide_cache: dict[tuple[int, int, int], int] = {}
         self._route_waypoints: list[tuple[float, float]] = []
+        # 0 = opportunistic short probes (fast); bumps toward careful when the
+        # frontier thrashes or geo-hits spike. Resets each leg.
+        self._careful: int = 0
+        self._geo_hit_streak: int = 0
 
     @property
     def can_resume(self) -> bool:
         return self._pause is not None
+
+    def _escalate_careful(self, reason: str) -> None:
+        """Move from fast probes toward longer / denser geo checks."""
+        prev = self._careful
+        self._careful = min(2, self._careful + 1)
+        if self._careful != prev:
+            # Tighten segment sampling so shore pockets stop looking navigable.
+            if self._careful == 1:
+                self.geo.segment_sample_nm = min(float(self.geo.segment_sample_nm), 0.03)
+            elif self._careful >= 2:
+                self.geo.segment_sample_nm = min(float(self.geo.segment_sample_nm), 0.02)
+            logger.info(
+                "probe careful %d→%d (%s) model=%s sample=%.3fnm",
+                prev,
+                self._careful,
+                reason,
+                self.model_id or "-",
+                self.geo.segment_sample_nm,
+            )
+
+    def _aim_depth_step_nm(self) -> float:
+        """Depth sample spacing along mark/guide chords (nm)."""
+        # Fast: 1.5 nm. Medium: 0.5 nm. Careful: chart-fine via blocked_segment.
+        return (1.5, 0.5, 0.05)[self._careful]
+
+    def _effective_probe_nm(self, requested_nm: float) -> float:
+        """Opportunistic short probe; stretch when careful after thrash/geo hits."""
+        scale = (1.0, 2.0, 3.5)[self._careful]
+        return max(requested_nm, min(requested_nm * scale, 6.0))
+
+    def _mark_line_blocked(
+        self, origin: tuple[float, float], target: tuple[float, float]
+    ) -> bool:
+        """True if the rhumb to ``target`` crosses land or shallows.
+
+        Opportunistic: shapely land chord (cheap) + sparse depth. After thrash,
+        fall back to full ``blocked_segment`` (pre-perf quality).
+        """
+        if self._careful >= 2:
+            return self.geo.blocked_segment(origin, target)
+        if self.geo.land.segment_crosses_land(origin, target):
+            return True
+        if self.geo.depth is None:
+            return False
+        dist = distance_nm(origin, target)
+        if dist <= 0:
+            return self.geo.too_shallow(origin)
+        step = self._aim_depth_step_nm()
+        n = max(1, int(math.ceil(dist / step)))
+        for i in range(1, n + 1):
+            f = min(1.0, i / n)
+            lat = origin[0] + f * (target[0] - origin[0])
+            lon = origin[1] + f * (target[1] - origin[1])
+            if self.geo.too_shallow((lat, lon)):
+                return True
+        return False
 
     def _emit(self, event: dict[str, Any]) -> None:
         if self.on_progress is not None:
@@ -393,12 +465,21 @@ class IsochroneRouter:
         of at the corner itself. Sailing to the vertex and then snapping onto
         the next leg is the kink on the chart.
         """
+        memo = node._guide_memo
+        if (
+            memo is not None
+            and memo[2] == node.guide_idx
+            and memo[3] == node.lat
+            and memo[4] == node.lon
+        ):
+            return (memo[0], memo[1])
         last = len(self._guide_pts) - 1
         mark = self._guide_pts[last]
         # Inside 2 nm of the race mark the chain is done — false depth holes
         # around a rock must not keep the boat aimed at a prior waypoint.
         if distance_nm(node.pos, mark) < 2.0:
             node.guide_idx = last
+            node._guide_memo = (mark[0], mark[1], node.guide_idx, node.lat, node.lon)
             return mark
         node.guide_idx = self._advance_guide(node.pos, node.guide_idx)
         # Wrong side of a headland: children inherit a guide_idx rounded while
@@ -424,13 +505,41 @@ class IsochroneRouter:
             node.guide_idx -= 1
         pt = self._guide_pts[node.guide_idx]
         if node.guide_idx >= last:
+            node._guide_memo = (pt[0], pt[1], node.guide_idx, node.lat, node.lon)
             return pt
         nxt = self._guide_pts[node.guide_idx + 1]
+        # Already inside the pass radius of this corner with the next bend in
+        # sight: aim there now. Otherwise we sail into the vertex on a low
+        # bearing and snap up when the mark pops clear (Needles underlay kink).
+        if (
+            distance_nm(node.pos, pt) <= self.p.waypoint_pass_nm
+            and self._chain_visible(node.pos, nxt)
+        ):
+            node.guide_idx = self._advance_guide(node.pos, node.guide_idx)
+            pt = self._guide_pts[node.guide_idx]
+            if node.guide_idx >= last:
+                node._guide_memo = (
+                    pt[0],
+                    pt[1],
+                    node.guide_idx,
+                    node.lat,
+                    node.lon,
+                )
+                return pt
+            nxt = self._guide_pts[node.guide_idx + 1]
         brg = bearing(pt, nxt)
-        for dist in (1.2, 0.6, 0.3):
+        for dist in (1.2, 0.6, 0.3, 0.15):
             ahead = destination(pt, brg, dist)
             if self._chain_visible(node.pos, ahead):
+                node._guide_memo = (
+                    ahead[0],
+                    ahead[1],
+                    node.guide_idx,
+                    node.lat,
+                    node.lon,
+                )
                 return ahead
+        node._guide_memo = (pt[0], pt[1], node.guide_idx, node.lat, node.lon)
         return pt
 
     def _rem(self, node: Node, tgt: tuple[float, float]) -> float:
@@ -463,8 +572,9 @@ class IsochroneRouter:
         brg_m = bearing(node.pos, target)
         brg_g = bearing(node.pos, guide)
         if abs(signed_diff(brg_g, brg_m)) > 60.0:
-            mark_blocked = self.geo.blocked_segment(node.pos, target)
-            if mark_blocked:
+            # Adaptive: fast sparse depth, escalate to full blocked_segment after
+            # thrash. A fixed 1.5 nm probe alone lied near Bembridge.
+            if self._mark_line_blocked(node.pos, target):
                 return brg_g
             return brg_m
         return brg_g
@@ -477,8 +587,17 @@ class IsochroneRouter:
         probe_nm: float,
         tws: float | None = None,
         twd: float | None = None,
+        stretch: bool = True,
     ) -> bool:
-        """True if a short step on heading (with leeway if known) is navigable."""
+        """True if a short step on heading (with leeway if known) is navigable.
+
+        ``probe_nm`` is the caller's opportunistic length; when ``_careful`` has
+        been raised after thrash/geo-hit streaks we stretch it so shore pockets
+        that looked clear at 0.8–1.5 nm are rejected before we commit into them.
+        Pass ``stretch=False`` for exact look-ahead binary search.
+        """
+        if stretch:
+            probe_nm = self._effective_probe_nm(probe_nm)
         if probe_nm <= 0:
             return True
         course = heading
@@ -494,6 +613,103 @@ class IsochroneRouter:
         # start point, so every heading looks blocked and the frontier dies
         # (Bembridge shelf on M2→M3 @315). Only the path ahead matters then.
         return not self._segment_blocked_ahead(pos, probe)
+
+    def _opposite_upwind(self, heading: float, twd: float, tws: float) -> float:
+        """The other upwind VMG board relative to ``heading``."""
+        up = self.boat.target_upwind_twa(tws)
+        port = norm360(twd + up)
+        stbd = norm360(twd - up)
+        if abs(signed_diff(heading, port)) <= abs(signed_diff(heading, stbd)):
+            return stbd
+        return port
+
+    def _board_room_nm(
+        self,
+        pos: tuple[float, float],
+        heading: float,
+        *,
+        tws: float,
+        twd: float,
+        max_nm: float,
+    ) -> float:
+        """Navigable sea-room (nm) along ``heading``, capped at ``max_nm``.
+
+        From deep water, room ends at ``board_room_depth_m`` (the 6 m shelf),
+        so we tack before riding the 4–5 m contour. Already on that shelf, room
+        ends only at the hard geo block — shallow boards stay legal.
+        """
+        if max_nm <= 0:
+            return 0.0
+        depth = self.geo.depth
+        shelf = float(self.p.board_room_depth_m)
+        d0 = float(depth.depth(pos)) if depth is not None else shelf + 1.0
+        use_shelf = depth is not None and d0 >= shelf
+
+        def ok(dist: float) -> bool:
+            if dist <= 1e-6:
+                return True
+            if not self._probe_clear(
+                pos, heading, probe_nm=dist, tws=tws, twd=twd, stretch=False
+            ):
+                return False
+            if use_shelf:
+                sample = destination(pos, heading, dist)
+                if float(depth.depth(sample)) < shelf:
+                    return False
+            return True
+
+        if ok(max_nm):
+            return max_nm
+        lo, hi = 0.0, max_nm
+        for _ in range(10):
+            mid = (lo + hi) * 0.5
+            if ok(mid):
+                lo = mid
+            else:
+                hi = mid
+        return lo
+
+    def _held_board_deadends_sooner(
+        self,
+        pos: tuple[float, float],
+        heading: float,
+        tgt: tuple[float, float],
+        tws: float,
+        twd: float,
+        arrive_nm: float,
+    ) -> bool:
+        """True when this upwind board runs out of sea-room before the other.
+
+        Gosport oversails: north board hits the 5 m shelf while the south board
+        still has longer clear water. Tack onto the longer board.
+
+        Not a deep-water-only policy: when both boards are short (banks on both
+        sides, already on a shelf), returns False so shallow attacks stay
+        allowed. Also False when this board fetches the mark.
+        """
+        if distance_nm(pos, tgt) < 1.2:
+            return False
+        if twa_from(heading, twd) >= 90.0:
+            return False
+        if self._heading_fetches(pos, heading, tgt, max(arrive_nm, 0.25)):
+            return False
+        look = float(self.p.board_room_lookout_nm)
+        margin = float(self.p.board_room_margin_nm)
+        held_room = self._board_room_nm(
+            pos, heading, tws=tws, twd=twd, max_nm=look
+        )
+        if held_room >= look - 1e-3:
+            return False
+        opp = self._opposite_upwind(heading, twd, tws)
+        if not self._probe_clear(
+            pos, opp, probe_nm=0.4, tws=tws, twd=twd, stretch=False
+        ):
+            return False
+        end = destination(pos, opp, 0.4)
+        if distance_nm(end, tgt) > distance_nm(pos, tgt) - 0.05:
+            return False
+        opp_room = self._board_room_nm(pos, opp, tws=tws, twd=twd, max_nm=look)
+        return opp_room >= held_room + margin
 
     def _heading_fetches(
         self,
@@ -726,7 +942,10 @@ class IsochroneRouter:
 
             Short ``clear()`` alone accepts a pocket into the island (M2→M3 on
             the IoW south coast: closer board clear at 0.8 nm, land at 1 nm).
+            Skip the long probe when the short one already fails.
             """
+            if not clear(heading):
+                return False
             return self._probe_clear(
                 node.pos,
                 heading,
@@ -759,6 +978,13 @@ class IsochroneRouter:
             and abs(signed_diff(other, brg)) + 10.0 < abs(signed_diff(same, brg))
         ):
             return other
+        # Post-mark: inbound heading is not a board to protect. Prefer the open
+        # board closer to the guide (Stromboli mark snap kept the island gybe).
+        if node.maneuver == "mark":
+            if open_board(closer):
+                return closer
+            if open_board(other):
+                return other
         # A waypoint bearing closer to the other gybe is not a layline. Stay on
         # this board; if the VMG heading is into land the fan eases off on the
         # same side before it will gybe.
@@ -1033,7 +1259,21 @@ class IsochroneRouter:
         elif seed_mode == "dn_vmg":
             if same_dn not in heads:
                 heads.append(same_dn)
-            if self._heading_fetches(node.pos, opp_dn, target, radius_nm):
+            same_dn_open = self._probe_clear(
+                node.pos,
+                same_dn,
+                probe_nm=min(1.5, max(1.0, distance_nm(node.pos, target) * 0.1)),
+                tws=tws,
+                twd=twd,
+            )
+            opp_dn_open = self._probe_clear(
+                node.pos, opp_dn, probe_nm=0.4, tws=tws, twd=twd
+            )
+            # Same pocket rule as up_vmg — Stromboli→Favignana seeded the
+            # island-bound gybe because only a geometric fetch opened the other.
+            if self._heading_fetches(node.pos, opp_dn, target, radius_nm) or (
+                not same_dn_open and opp_dn_open
+            ):
                 if opp_dn not in heads:
                     heads.append(opp_dn)
 
@@ -1103,6 +1343,16 @@ class IsochroneRouter:
                 self._probe_clear(node.pos, h, probe_nm=shore_probe, tws=tws, twd=twd)
                 for h in held
             )
+            # Held board is about to leave sea-room while opposite still closes —
+            # open the other board under lockout.
+            if (
+                not held_into_shore
+                and node.heading is not None
+                and self._held_board_deadends_sooner(
+                    node.pos, node.heading, target, tws, twd, radius_nm
+                )
+            ):
+                held_into_shore = True
             lays = []
             if distance_nm(node.pos, target) >= 0.45:
                 lays = [
@@ -1142,12 +1392,16 @@ class IsochroneRouter:
                 dist0 = distance_nm(node.pos, target)
                 probe = max(short_probe, 0.3)
 
-                def scan(max_away: float) -> list[float]:
+                def scan(max_away: float, *, upwind_only: bool) -> list[float]:
                     found: list[float] = []
                     for deg in range(0, 360, 15):
                         h = float(deg)
                         htwa = twa_from(h, twd)
-                        if htwa < up_twa - 1.0 or htwa >= 90.0:
+                        if htwa < up_twa - 1.0:
+                            continue
+                        if upwind_only and htwa >= 90.0:
+                            continue
+                        if not upwind_only and htwa > min(175.0, dn_twa + 25.0):
                             continue
                         if not self._probe_clear(
                             node.pos, h, probe_nm=short_probe, tws=tws, twd=twd
@@ -1167,15 +1421,20 @@ class IsochroneRouter:
 
                 # Prefer water that closes the mark; if the pocket has none,
                 # allow a short lateral creep (Needles) rather than dying.
-                return scan(0.15) or scan(0.45)
+                # Last resort: bear away into clear water when every upwind
+                # heading is shoal (Bembridge shelf on M2→M3 @315).
+                return (
+                    scan(0.15, upwind_only=True)
+                    or scan(0.45, upwind_only=True)
+                    or scan(0.6, upwind_only=False)
+                )
 
             if clear_held and not held_into_shore:
                 # Mid-channel lockout: stay on the held board. Layline only.
                 out = [*clear_held, *lays]
             elif clear_held and held_into_shore:
-                # Short probe OK but shore probe fails — approaching the bank.
-                # Keep a creep on held AND allow a clear opposite upwind board
-                # (otherwise we sail into the Needles and the frontier dies).
+                # Short probe OK but shore/shelf look-ahead says leave soon —
+                # keep a creep on held AND allow a clear opposite upwind board.
                 out = [*clear_held, *lays, *_opp_upwind()]
             elif held_into_shore or not held:
                 # Truly stuck: opposite VMG board, else eased pocket scan.
@@ -1317,6 +1576,45 @@ class IsochroneRouter:
         # Empty fan (filters removed everything) — sail the seed.
         if not out:
             out = [seed] if self.boat.bsp(tws, twa_from(seed, twd)) > 0.05 else [same_up]
+        # Fan / seed into shore (or stranded on a blocked cell): bear-away scan.
+        # Gated on seed/blocked — not "any out head" — so open-water Fastnet
+        # does not pay a 24-heading probe every expand.
+        short_escape = min(
+            self.p.fan_probe_nm_min, max(distance_nm(node.pos, guide), 0.05)
+        )
+        seed_blocked = self.geo.blocked_point(node.pos) or not self._probe_clear(
+            node.pos, seed, probe_nm=short_escape, tws=tws, twd=twd
+        )
+        if out and seed_blocked and not any(
+            self._probe_clear(node.pos, h, probe_nm=short_escape, tws=tws, twd=twd)
+            for h in out
+        ):
+            aim = self._ban_aim_bearing(node, target)
+            dist0 = distance_nm(node.pos, target)
+            escape: list[float] = []
+            for deg in range(0, 360, 15):
+                h = float(deg)
+                htwa = twa_from(h, twd)
+                if htwa < up_twa - 1.0 or htwa > min(175.0, dn_twa + 25.0):
+                    continue
+                if not self._probe_clear(
+                    node.pos, h, probe_nm=short_escape, tws=tws, twd=twd
+                ):
+                    continue
+                end = destination(node.pos, h, max(short_escape, 0.3))
+                if distance_nm(end, target) > dist0 + 0.6:
+                    continue
+                escape.append(h)
+            escape.sort(
+                key=lambda h: (
+                    distance_nm(
+                        destination(node.pos, h, max(short_escape, 0.3)), target
+                    ),
+                    abs(signed_diff(h, aim)),
+                )
+            )
+            if escape:
+                out = escape[:4]
         # A 60° gybe beside a headland is the spike: the long probe only liked a
         # heading aimed at open water. Turn at most 25° when a nearer heading is
         # clear for a quarter mile, and keep a layline tack or gybe that fetches
@@ -1651,9 +1949,9 @@ class IsochroneRouter:
     ) -> tuple[Node | None, bool]:
         """Hold heading until rethink (mark clear / layline / wind / geo) or cap.
 
-        The guidance point is resolved once here rather than per substep: a
-        commit *is* the decision to sail at one target, and re-resolving mid-
-        commit would cost a line-of-sight test per substep.
+        Guidance is refreshed each substep: a waypoint chain that clears mid-
+        commit (mark comes into sight past a headland) must stop the underlay
+        onto the old corner and re-seed onto the mark, not sail low then snap.
         """
         guide = self._guide(node)
         guide_idx = node.guide_idx
@@ -1675,9 +1973,19 @@ class IsochroneRouter:
             lockout_nm = max(0.5, float(self.p.tack_lockout_nm))
             if self._sailed_since_tack_nm(node) < lockout_nm:
                 shore = max(0.5, float(self.p.tack_shore_probe_nm))
-                held_into_shore = not self._probe_clear(
+                held_bsp = self.boat.bsp(
+                    tws0, twa_from(node.heading, twd0)
+                )
+                # Pinch after a wind flip is as stuck as shore — probe_clear only
+                # checks geo, so an unsailable held board looked "fine" and the
+                # commit lockout refused the only sailable tack (osc finish).
+                held_into_shore = held_bsp <= 0.05 or not self._probe_clear(
                     node.pos, node.heading, probe_nm=shore, tws=tws0, twd=twd0
                 )
+                if not held_into_shore and self._held_board_deadends_sooner(
+                    node.pos, node.heading, tgt, tws0, twd0, max(arrive_nm, 0.2)
+                ):
+                    held_into_shore = True
                 lays = self._heading_fetches(
                     node.pos, heading, tgt, max(arrive_nm, 0.2)
                 )
@@ -1731,6 +2039,19 @@ class IsochroneRouter:
         # Constraint mode: creep one substep while mark bearing is blocked.
         if not self._mark_bearing_clear(node.pos, guide, tws=tws0, twd=twd0):
             budget = min(budget, float(self.p.time_step_s))
+        # Cap the commit to remaining sea-room so the first substep cannot
+        # jump past the 6 m shelf after a rethink (Gosport oversail).
+        if twa0 < 90.0 and bsp0 > 0:
+            room = self._board_room_nm(
+                node.pos,
+                heading,
+                tws=tws0,
+                twd=twd0,
+                max_nm=float(self.p.board_room_lookout_nm),
+            )
+            if room < float(self.p.board_room_lookout_nm):
+                sail_nm = max(0.15, room * 0.85)
+                budget = min(budget, (sail_nm / bsp0) * 3600.0 + 5.0)
         if budget < 1.0:
             return None, False
 
@@ -1743,6 +2064,7 @@ class IsochroneRouter:
         sub = float(self.p.time_step_s)
         geo_hit = False
         need_rethink = False
+        arrive_r = arrive_nm if arrive_nm > 0 else self.p.mark_arrival_break_nm
 
         while elapsed + 1e-6 < budget:
             dt = min(sub, budget - elapsed)
@@ -1750,18 +2072,15 @@ class IsochroneRouter:
             if elapsed < 1e-9 and pen > 0:
                 sail_dt = max(0.0, dt - pen)
 
-            if elapsed > 1e-6 and self._should_rethink_heading(
-                heading=heading,
-                pos=(lat, lon),
-                tgt=guide,
-                tws=last_tws,
-                twd=last_twd,
+            if elapsed > 1e-6 and self._other_board_lays(
+                heading, (lat, lon), tgt, last_tws, last_twd, arrive_r
             ):
                 need_rethink = True
                 break
-            arrive_r = arrive_nm if arrive_nm > 0 else self.p.mark_arrival_break_nm
-            if elapsed > 1e-6 and self._other_board_lays(
-                heading, (lat, lon), tgt, last_tws, last_twd, arrive_r
+            # Next tack would be trapped further along this board, but is open
+            # here → rethink now (allows shallow boards; blocks oversail pockets).
+            if elapsed > 1e-6 and self._held_board_deadends_sooner(
+                (lat, lon), heading, tgt, last_tws, last_twd, arrive_r
             ):
                 need_rethink = True
                 break
@@ -1850,16 +2169,27 @@ class IsochroneRouter:
             if distance_nm((lat, lon), tgt) <= arrive:
                 break
 
-            # Rounding a headland mid-commit changes the objective, and the
-            # mask line-of-sight test is cheap enough to run every substep.
-            if self._advance_guide((lat, lon), guide_idx) != guide_idx:
+            # Re-resolve chain aim after moving. A stale corner bearing is what
+            # produced the underlay→snap kinks once the mark came into sight.
+            live = Node(
+                lat=lat,
+                lon=lon,
+                t=t,
+                heading=heading,
+                guide_idx=guide_idx,
+            )
+            live_guide = self._guide(live)
+            if live.guide_idx != guide_idx:
+                guide_idx = live.guide_idx
+                guide = live_guide
                 need_rethink = True
                 break
-
+            guide_idx = live.guide_idx
+            guide = live_guide
             if self._should_rethink_heading(
                 heading=heading,
                 pos=(lat, lon),
-                tgt=guide,
+                tgt=live_guide,
                 tws=last_tws,
                 twd=last_twd,
             ):
@@ -1917,7 +2247,7 @@ class IsochroneRouter:
             depth_m=depth_m,
             hazard_cost=0.0,
             rethink=need_rethink,
-            guide_idx=node.guide_idx,
+            guide_idx=guide_idx,
         )
         return child, geo_hit
 
@@ -2021,6 +2351,183 @@ class IsochroneRouter:
         guide = self._guide(node)
         return self.geo.blocked_segment(node.pos, guide)
 
+    def _path_is_thrashing(self, node: Node, tgt: tuple[float, float]) -> bool:
+        """True when the lead path is scribbling in a pocket instead of making way.
+
+        Detects the Bembridge / Solent birds-nest: many heading reversals inside a
+        small patch while mark distance barely moves. A clean beat has reversals
+        too, but they span miles — geographic diameter separates the two.
+
+        Uses crow-flies distance to ``tgt`` (not chain ``_rem``) so ancestors
+        from the previous leg — with a stale ``guide_idx`` — cannot IndexError.
+        """
+        # Final approach to the mark is allowed to be busy.
+        if distance_nm(node.pos, tgt) < 1.0:
+            return False
+        pts: list[tuple[float, float]] = []
+        headings: list[float] = []
+        dists: list[float] = []
+        cur: Node | None = node
+        sailed = 0.0
+        while cur is not None and len(pts) < 14:
+            if cur.maneuver == "mark" and cur is not node:
+                break
+            pts.append(cur.pos)
+            dists.append(distance_nm(cur.pos, tgt))
+            if cur.heading is not None:
+                headings.append(cur.heading)
+            if cur.parent is not None:
+                sailed += distance_nm(cur.parent.pos, cur.pos)
+            cur = cur.parent
+            if sailed >= 3.5:
+                break
+        if len(pts) < 8 or len(headings) < 6:
+            return False
+        # Diameter of the recent track. Keep this tight — a normal Solent beat
+        # under oscillating wind flips boards every ~1 nm and must NOT match.
+        lat0 = sum(p[0] for p in pts) / len(pts)
+        lon0 = sum(p[1] for p in pts) / len(pts)
+        radius = max(distance_nm((lat0, lon0), p) for p in pts)
+        if radius > 0.55:
+            return False
+        flips = 0
+        for a, b in zip(headings, headings[1:]):
+            if abs(signed_diff(a, b)) >= 90.0:
+                flips += 1
+        # dists[0]=lead, dists[-1]=oldest; positive gain = closed on mark.
+        dist_gain = dists[-1] - dists[0]
+        # Thrash: birds-nest scribble, several reverse flips, little progress.
+        if flips >= 4 and dist_gain < 0.25:
+            return True
+        maneuvers = 0
+        cur = node
+        walked = 0.0
+        while cur is not None and walked < 1.5:
+            if cur.maneuver in ("tack", "gybe"):
+                maneuvers += 1
+            if cur.parent is None or cur.maneuver == "mark":
+                break
+            walked += distance_nm(cur.parent.pos, cur.pos)
+            cur = cur.parent
+        return maneuvers >= 5 and radius <= 0.55
+
+    def _last_good_ancestor(
+        self, node: Node, tgt: tuple[float, float]
+    ) -> Node:
+        """Walk back out of the thrash pocket to a node with room to rethink."""
+        cluster = [node.pos]
+        cur: Node | None = node
+        best = node
+        sailed = 0.0
+        d_lead = distance_nm(node.pos, tgt)
+        while cur is not None and cur.parent is not None:
+            if cur.parent.maneuver == "mark":
+                break
+            sailed += distance_nm(cur.parent.pos, cur.pos)
+            cur = cur.parent
+            cluster.append(cur.pos)
+            lat0 = sum(p[0] for p in cluster) / len(cluster)
+            lon0 = sum(p[1] for p in cluster) / len(cluster)
+            if max(distance_nm((lat0, lon0), p) for p in cluster) > 0.85:
+                best = cur
+                break
+            if sailed >= 2.5:
+                best = cur
+                break
+            # Prefer a node that was closer to the mark before the scribble.
+            if distance_nm(cur.pos, tgt) + 0.15 < d_lead:
+                best = cur
+        return best
+
+    def _recover_from_thrash(
+        self,
+        frontier: list[Node],
+        tgt: tuple[float, float],
+        radius_nm: float,
+    ) -> list[Node]:
+        """Backtrack out of a thrash pocket and commit the second-best escape.
+
+        Drops the heading board that produced the scribble and retries from the
+        last known-good ancestor so the frontier can leave the shoal contour.
+        """
+        lead = min(frontier, key=lambda n: self._rem(n, tgt))
+        good = self._last_good_ancestor(lead, tgt)
+        banned = lead.heading
+        # Also ban the parent's board — thrash is usually a two-heading flip.
+        banned2 = lead.parent.heading if lead.parent is not None else None
+        rem0 = self._rem(good, tgt)
+        w = self.wind.wind_at(good.lat, good.lon, good.t)
+        if w is None:
+            return []
+        tws, twd = w
+        up_twa = self.boat.target_upwind_twa(tws)
+        dn_twa = self.boat.target_downwind_twa(tws)
+        brg_aim = self._ban_aim_bearing(good, tgt)
+        children: list[Node] = []
+        for deg in range(0, 360, 15):
+            heading = float(deg)
+            if banned is not None and abs(signed_diff(heading, banned)) < 35.0:
+                continue
+            if banned2 is not None and abs(signed_diff(heading, banned2)) < 35.0:
+                continue
+            twa = twa_from(heading, twd)
+            if twa < up_twa - 1.0 or twa > min(175.0, dn_twa + 25.0):
+                continue
+            if not self._probe_clear(good.pos, heading, probe_nm=0.8, tws=tws, twd=twd):
+                continue
+            end = destination(good.pos, heading, 0.8)
+            trial = Node(
+                lat=end[0],
+                lon=end[1],
+                t=good.t,
+                heading=heading,
+                guide_idx=good.guide_idx,
+            )
+            if self._rem(trial, tgt) > rem0 + float(self.p.progress_rem_slack_nm) + 0.4:
+                continue
+            child, _geo = self._commit_heading(
+                good,
+                heading,
+                tgt,
+                max_commit_s=min(900.0, float(self.p.max_commit_s)),
+                tws0=tws,
+                twd0=twd,
+                arrive_nm=radius_nm,
+            )
+            if child is not None:
+                children.append(child)
+        if not children:
+            return []
+        children.sort(
+            key=lambda n: (
+                self._rem(n, tgt),
+                -(self.geo.depth.depth(n.pos) if self.geo.depth is not None else 0.0),
+                abs(signed_diff(n.heading or 0.0, brg_aim)),
+            )
+        )
+        # Prefer the second-best when the best is still near the thrash patch.
+        pick = children[0]
+        if len(children) > 1 and distance_nm(pick.pos, lead.pos) < 0.5:
+            pick = children[1]
+        elif len(children) > 1:
+            # Explicit second-best if best is on a near-banned residual board.
+            if banned is not None and abs(signed_diff(pick.heading or 0.0, banned)) < 50.0:
+                pick = children[1]
+        logger.info(
+            "thrash recover from=(%.4f,%.4f) good=(%.4f,%.4f) banned=%.0f → h=%.0f rem %.2f→%.2f",
+            lead.lat,
+            lead.lon,
+            good.lat,
+            good.lon,
+            banned or -1.0,
+            pick.heading or -1.0,
+            rem0,
+            self._rem(pick, tgt),
+        )
+        # Keep non-thrashing frontier peers so we don't collapse diversity.
+        kept = [n for n in frontier if not self._path_is_thrashing(n, tgt)]
+        return [pick, *kept[:6]]
+
     def _escape_frontier(
         self,
         frontier: list[Node],
@@ -2053,6 +2560,14 @@ class IsochroneRouter:
         held_into_shore = node.heading is None or not self._probe_clear(
             node.pos, node.heading, probe_nm=shore, tws=tws, twd=twd
         )
+        if (
+            not held_into_shore
+            and node.heading is not None
+            and self._held_board_deadends_sooner(
+                node.pos, node.heading, tgt, tws, twd, radius_nm
+            )
+        ):
+            held_into_shore = True
         parent = None
         if fresh:
             parent = Node(
@@ -2139,6 +2654,11 @@ class IsochroneRouter:
         )
         stalled = 0
         self._escapes_left = 6
+        thrash_left = 4
+        self._careful = 0
+        self._geo_hit_streak = 0
+        # Restore opportunistic segment sampling for the new leg.
+        self.geo.segment_sample_nm = 0.05
         t_leg = time.perf_counter()
         n_wind = 0
         n_blocked = 0
@@ -2177,6 +2697,15 @@ class IsochroneRouter:
             n_wind += len(frontier)
             n_blocked += n_geo_hit
             n_expansions += len(nxt)
+
+            # Geo-hit streak → stretch probes (fast mode was lying about clearance).
+            if n_tried > 0 and n_geo_hit / max(n_tried, 1) > self.p.geo_hit_retry_fraction:
+                self._geo_hit_streak += 1
+                if self._geo_hit_streak >= 3:
+                    self._escalate_careful("geo_hit_streak")
+                    self._geo_hit_streak = 0
+            else:
+                self._geo_hit_streak = 0
 
             # Adaptive: most candidates geo-hit → retry with shorter commits.
             if n_tried > 0 and n_geo_hit / n_tried > self.p.geo_hit_retry_fraction and nxt:
@@ -2287,12 +2816,46 @@ class IsochroneRouter:
                 break
 
             rem = min(self._rem(n, tgt) for n in frontier)
+            lead = min(frontier, key=lambda n: self._rem(n, tgt))
+            # Shore-creep nests often "improve" rem by metres each step, so the
+            # stall counter never fires — still detect the geographic scribble.
+            if (
+                thrash_left > 0
+                and steps_taken >= 10
+                and steps_taken % 5 == 0
+                and self._path_is_thrashing(lead, tgt)
+            ):
+                # Stretch probes first; only rewrite the frontier if recover
+                # actually improves rem. False positives under oscillating wind
+                # used to pick a reverse board and empty the Needles approach.
+                self._escalate_careful("thrash")
+                recovered = self._recover_from_thrash(
+                    frontier, tgt, target.radius_nm
+                )
+                if recovered and self._rem(recovered[0], tgt) < rem - 0.15:
+                    thrash_left -= 1
+                    frontier = recovered
+                    stalled = 0
+                    continue
             if rem < best_remaining - 1e-4:
                 best_remaining = rem
                 stalled = 0
             else:
                 stalled += 1
-                lead = min(frontier, key=lambda n: self._rem(n, tgt))
+                if (
+                    thrash_left > 0
+                    and stalled >= 8
+                    and self._path_is_thrashing(lead, tgt)
+                ):
+                    self._escalate_careful("thrash_stall")
+                    recovered = self._recover_from_thrash(
+                        frontier, tgt, target.radius_nm
+                    )
+                    if recovered and self._rem(recovered[0], tgt) < rem - 0.15:
+                        thrash_left -= 1
+                        frontier = recovered
+                        stalled = 0
+                        continue
                 if (
                     stalled == stall_limit // 2
                     and self._escapes_left > 0

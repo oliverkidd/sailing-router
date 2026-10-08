@@ -1,13 +1,12 @@
 "use client";
 
 import type { Course, ModelPreset } from "@/lib/types";
-import { courseDistanceNm, courseIsReady } from "@/lib/mapOverlays";
-
-function fmtCoord(lat: number, lon: number): string {
-  const ns = lat >= 0 ? "N" : "S";
-  const ew = lon >= 0 ? "E" : "W";
-  return `${Math.abs(lat).toFixed(2)}°${ns} ${Math.abs(lon).toFixed(2)}°${ew}`;
-}
+import {
+  courseDistanceNm,
+  courseIsReady,
+  courseWithEffectiveFinish,
+  isPointSet,
+} from "@/lib/mapOverlays";
 
 function fmtDepart(iso: string): string {
   const d = new Date(iso);
@@ -29,42 +28,14 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function formatSummaryClipboard(
-  course: Course,
-  selected: Set<string>,
-  models: ModelPreset[],
-): string {
-  const ready = courseIsReady(course);
-  if (!ready) return "Course not ready — set start and finish.";
-  const forecastLabels =
-    selected.size === 0
-      ? "None selected"
-      : Array.from(selected)
-          .map((id) => models.find((m) => m.id === id)?.label ?? id)
-          .join(", ");
-  const marks =
-    course.marks.length === 0
-      ? "None"
-      : `${course.marks.length} mark${course.marks.length === 1 ? "" : "s"}`;
-  const crow = courseDistanceNm(course);
-  return [
-    `Start: ${fmtCoord(course.start[0], course.start[1])}`,
-    `Finish: ${fmtCoord(course.finish[0], course.finish[1])}`,
-    `Marks: ${marks}`,
-    `Crow flies: ${crow.toFixed(1)} nm`,
-    `Depart: ${fmtDepart(course.depart_utc)}`,
-    `Forecasts: ${forecastLabels}`,
-  ].join("\n");
-}
-
 export default function RouteReview({
   course,
   selected,
-  models,
   running,
   prepState,
   message,
   onRun,
+  runDisabledReason,
 }: {
   course: Course;
   selected: Set<string>;
@@ -73,36 +44,39 @@ export default function RouteReview({
   prepState: "idle" | "preparing" | "ready" | "error" | "warning";
   message?: string;
   onRun: () => void;
+  runDisabledReason?: string;
 }) {
   const ready = courseIsReady(course);
-  const canRun = !running && selected.size > 0 && ready;
-  const forecastLabels =
-    selected.size === 0
-      ? "None selected"
-      : Array.from(selected)
-          .map((id) => models.find((m) => m.id === id)?.label ?? id)
-          .join(", ");
-  const crowNm = ready ? courseDistanceNm(course) : 0;
+  const canRun = !running && selected.size > 0 && ready && !runDisabledReason;
+  const resolved = courseWithEffectiveFinish(course);
+  const crowNm = ready ? courseDistanceNm(resolved) : 0;
+  const markCount = course.marks.filter((m) => isPointSet(m.position)).length;
+  const forecastCount = selected.size;
 
   return (
     <div className="route-review">
       {!ready ? (
-        <div className="route-review-empty">Set start and finish on the map to review the course.</div>
+        <div className="route-review-empty">
+          Add a start and at least one more point to review the course.
+        </div>
       ) : (
         <>
-          <Row label="Start" value={fmtCoord(course.start[0], course.start[1])} />
-          <Row label="Finish" value={fmtCoord(course.finish[0], course.finish[1])} />
           <Row
             label="Marks"
             value={
-              course.marks.length === 0
-                ? "None"
-                : `${course.marks.length} mark${course.marks.length === 1 ? "" : "s"}`
+              markCount === 0 ? "None" : `${markCount} mark${markCount === 1 ? "" : "s"}`
             }
           />
           <Row label="Crow flies" value={`${crowNm.toFixed(1)} nm`} />
           <Row label="Depart" value={fmtDepart(course.depart_utc)} />
-          <Row label="Forecasts" value={forecastLabels} />
+          <Row
+            label="Forecasts"
+            value={
+              forecastCount === 0
+                ? "None"
+                : `${forecastCount} model${forecastCount === 1 ? "" : "s"}`
+            }
+          />
         </>
       )}
 
@@ -115,6 +89,7 @@ export default function RouteReview({
         onClick={() => onRun()}
         disabled={!canRun}
         className="route-review-run"
+        title={runDisabledReason}
         style={{
           background: canRun ? "var(--accent)" : "var(--panel-2)",
           color: canRun ? "#04231f" : "var(--muted)",
@@ -127,6 +102,9 @@ export default function RouteReview({
             : "Routing…"
           : `Run ${selected.size || ""} model${selected.size === 1 ? "" : "s"}`}
       </button>
+      {runDisabledReason && !running && (
+        <div className="route-review-hint">{runDisabledReason}</div>
+      )}
     </div>
   );
 }

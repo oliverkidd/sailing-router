@@ -7,12 +7,13 @@ import { api } from "@/lib/api";
 import { chartPmtilesUrl } from "@/lib/chartUrls";
 import { installDeviceCache } from "@/lib/deviceCache";
 import {
+  boundsFromCourseAndRoutes,
   boundsFromMap,
-  courseIsReady,
   isPointSet,
   seekTimeAlongRoute,
   type MapBounds,
 } from "@/lib/mapOverlays";
+import { bboxContains } from "@/lib/windTiles";
 import { sampleGrid, sliceSeries, type MeteoGrid, type WindSeries } from "@/lib/meteoGrid";
 import { WindHeatmapLayer } from "@/lib/windHeatmap";
 import {
@@ -45,8 +46,36 @@ import {
 
 const DEFAULT_ZOOM = 5;
 const MIN_ZOOM = 4;
+/** Cap for framing a course/route — allows zoom-in from the wide default view. */
+const FIT_MAX_ZOOM = 14;
 /** Allow bearing rotate only once the camera is pitched into 3D. */
 const ROTATE_ENABLE_PITCH_DEG = 5;
+
+/** True when `box` is on screen and fills enough of the view (not a speck at sea). */
+function bboxMeaningfullyFramed(view: MapBounds, box: MapBounds): boolean {
+  if (!bboxContains(view, box, 0)) return false;
+  const vLat = Math.max(1e-9, view.lat_max - view.lat_min);
+  const vLon = Math.max(1e-9, view.lon_max - view.lon_min);
+  const bLat = Math.max(0, box.lat_max - box.lat_min);
+  const bLon = Math.max(0, box.lon_max - box.lon_min);
+  return Math.max(bLat / vLat, bLon / vLon) >= 0.15;
+}
+
+/** Rough camera so the first frame is near the course before fitBounds refines it. */
+function cameraForBounds(b: MapBounds): { center: [number, number]; zoom: number } {
+  const center: [number, number] = [
+    (b.lon_min + b.lon_max) / 2,
+    (b.lat_min + b.lat_max) / 2,
+  ];
+  const latSpan = Math.max(0.02, b.lat_max - b.lat_min);
+  const lonSpan = Math.max(0.02, b.lon_max - b.lon_min);
+  const span = Math.max(latSpan, lonSpan * Math.cos((center[1] * Math.PI) / 180));
+  const zoom = Math.min(
+    FIT_MAX_ZOOM,
+    Math.max(MIN_ZOOM, Math.round(8.2 - Math.log2(span))),
+  );
+  return { center, zoom };
+}
 /** Enable 3D terrain mesh only when pitched (top-down stays in the flat pipeline). */
 const MESH_PITCH_MIN_DEG = 5;
 
@@ -537,6 +566,7 @@ export default function MapView({
   planPosition = null,
   planHeading = null,
   fitRouteKey,
+  initialBounds = null,
   editMode = "none",
   showDepth = true,
   onMapClick,
@@ -545,6 +575,7 @@ export default function MapView({
   onCoursePointMove,
   onOverlayError,
   onViewportChange,
+  onBootReady,
 }: {
   routes?: ModelRoute[];
   course?: Course | null;
@@ -561,6 +592,8 @@ export default function MapView({
   planPosition?: [number, number] | null;
   planHeading?: number | null;
   fitRouteKey?: string;
+  /** Optional first-paint camera (restored course/route) before style load. */
+  initialBounds?: MapBounds | null;
   editMode?: EditMode;
   showDepth?: boolean;
   onMapClick?: (lat: number, lon: number) => void;
@@ -574,6 +607,8 @@ export default function MapView({
   ) => void;
   onOverlayError?: (message: string | null) => void;
   onViewportChange?: (bounds: MapBounds, maxSpanMiles: number, zoom: number) => void;
+  /** Fires once when the map is framed and ready to reveal (boot cover). */
+  onBootReady?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -603,6 +638,22 @@ export default function MapView({
   const terrainTileBoundsRef = useRef<DemBounds | null>(null);
 
   const flewToLiveRef = useRef(false);
+  const fitRouteKeyRef = useRef(fitRouteKey ?? "");
+  fitRouteKeyRef.current = fitRouteKey ?? "";
+  const applyFitRef = useRef<(() => void) | null>(null);
+  const onBootReadyRef = useRef(onBootReady);
+  onBootReadyRef.current = onBootReady;
+  const bootDoneRef = useRef(false);
+  const signalBootReadyRef = useRef(() => {
+    if (bootDoneRef.current) return;
+    bootDoneRef.current = true;
+    onBootReadyRef.current?.();
+  });
+  const initialBoundsRef = useRef(initialBounds);
+  // Capture first-mount bounds only — later prop updates must not recreate the map.
+  if (initialBounds && !initialBoundsRef.current) {
+    initialBoundsRef.current = initialBounds;
+  }
 
   const propsRef = useRef({
     routes,
@@ -645,11 +696,15 @@ export default function MapView({
     if (!containerRef.current || mapRef.current) return;
     ensurePmtilesProtocol();
 
+    const bootCam = initialBoundsRef.current
+      ? cameraForBounds(initialBoundsRef.current)
+      : { center: REGION_CENTER, zoom: DEFAULT_ZOOM };
+
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: buildChartStyle(window.location.origin),
-      center: REGION_CENTER,
-      zoom: DEFAULT_ZOOM,
+      center: bootCam.center,
+      zoom: bootCam.zoom,
       minZoom: MIN_ZOOM,
       maxZoom: 18,
       maxPitch: 60,
@@ -706,15 +761,63 @@ export default function MapView({
     windFlowRef.current = windFlow;
     windArrowsRef.current = windArrows;
 
+    const applyFit = () => {
+      const key = fitRouteKeyRef.current;
+      if (!loadedRef.current) return;
+
+      const routeBox = boundsFromCourseAndRoutes(
+        propsRef.current.course,
+        propsRef.current.routes,
+      );
+      if (!key || !routeBox) {
+        signalBootReadyRef.current();
+        return;
+      }
+
+      const view = boundsFromMap(() => map.getBounds());
+      const forceFrame = key.startsWith("load-") || key.startsWith("frame-");
+      if (!forceFrame && bboxMeaningfullyFramed(view, routeBox)) {
+        signalBootReadyRef.current();
+        return;
+      }
+
+      map.fitBounds(
+        [
+          [routeBox.lon_min, routeBox.lat_min],
+          [routeBox.lon_max, routeBox.lat_max],
+        ],
+        {
+          padding: 56,
+          duration: forceFrame ? 0 : 600,
+          maxZoom: Math.max(map.getZoom(), FIT_MAX_ZOOM),
+        },
+      );
+      if (forceFrame) {
+        map.once("idle", () => signalBootReadyRef.current());
+      } else {
+        signalBootReadyRef.current();
+      }
+    };
+    applyFitRef.current = applyFit;
+
     map.on("load", async () => {
       loadedRef.current = true;
+      // Prefer framing a restored course/route over flying to a lone GPS fix.
+      applyFit();
       const firstLive = propsRef.current.livePosition;
-      if (firstLive && !flewToLiveRef.current) {
+      if (
+        firstLive &&
+        !flewToLiveRef.current &&
+        !fitRouteKeyRef.current
+      ) {
         flewToLiveRef.current = true;
         map.flyTo({
           center: [firstLive[1], firstLive[0]],
           zoom: Math.max(map.getZoom(), 11),
         });
+      }
+      if (!fitRouteKeyRef.current) {
+        map.once("idle", () => signalBootReadyRef.current());
       }
       const empty = { type: "FeatureCollection" as const, features: [] };
 
@@ -1237,13 +1340,14 @@ export default function MapView({
             geometry: { type: "Point", coordinates: [p.course.start[1], p.course.start[0]] },
           });
         }
-        p.course.marks.forEach((mk, i) =>
+        p.course.marks.forEach((mk, i) => {
+          if (!isPointSet(mk.position)) return;
           courseFeatures.push({
             type: "Feature",
-            properties: { kind: "mark", label: String(i + 1), index: i },
+            properties: { kind: "mark", label: `M${i + 1}`, index: i },
             geometry: { type: "Point", coordinates: [mk.position[1], mk.position[0]] },
-          }),
-        );
+          });
+        });
         if (isPointSet(p.course.finish)) {
           courseFeatures.push({
             type: "Feature",
@@ -1392,17 +1496,7 @@ export default function MapView({
   }, [windSeries, windTimeUtc, showWind]);
 
   useEffect(() => {
-    const m = mapRef.current;
-    if (!m || !loadedRef.current || !fitRouteKey) return;
-    const c = propsRef.current.course;
-    if (!c || !courseIsReady(c)) return;
-    m.fitBounds(
-      [
-        [Math.min(c.start[1], c.finish[1]) - 0.2, Math.min(c.start[0], c.finish[0]) - 0.2],
-        [Math.max(c.start[1], c.finish[1]) + 0.2, Math.max(c.start[0], c.finish[0]) + 0.2],
-      ],
-      { padding: 48, duration: 800 },
-    );
+    applyFitRef.current?.();
   }, [fitRouteKey]);
 
   useEffect(() => {

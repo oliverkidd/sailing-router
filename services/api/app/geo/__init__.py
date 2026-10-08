@@ -126,27 +126,33 @@ class DepthField:
         deep samples is not averaged away. Non-finite / missing → 0 (blocks).
         """
         lat, lon = pos
-        if (
-            lat < self.lats[0]
-            or lat > self.lats[-1]
-            or lon < self.lons[0]
-            or lon > self.lons[-1]
-        ):
+        lats, lons = self.lats, self.lons
+        if lat < lats[0] or lat > lats[-1] or lon < lons[0] or lon > lons[-1]:
             return 0.0
-        i = int(np.clip(np.searchsorted(self.lats, lat) - 1, 0, self.lats.size - 2))
-        j = int(np.clip(np.searchsorted(self.lons, lon) - 1, 0, self.lons.size - 2))
+        # Plain searchsorted — avoid np.clip wrapper overhead on the hot path.
+        i = int(np.searchsorted(lats, lat) - 1)
+        j = int(np.searchsorted(lons, lon) - 1)
+        if i < 0:
+            i = 0
+        elif i > lats.size - 2:
+            i = lats.size - 2
+        if j < 0:
+            j = 0
+        elif j > lons.size - 2:
+            j = lons.size - 2
         key = (i, j)
         hit = self._cell_cache.get(key)
         if hit is not None:
             return hit
-        cells = (
-            self.depth_m[i, j],
-            self.depth_m[i, j + 1],
-            self.depth_m[i + 1, j],
-            self.depth_m[i + 1, j + 1],
-        )
-        vals = [0.0 if not np.isfinite(v) or v < 0 else float(v) for v in cells]
-        out = min(vals)
+        d = self.depth_m
+        cells = (d[i, j], d[i, j + 1], d[i + 1, j], d[i + 1, j + 1])
+        out = 1e9
+        for v in cells:
+            fv = 0.0 if not np.isfinite(v) or v < 0 else float(v)
+            if fv < out:
+                out = fv
+        if out > 1e8:
+            out = 0.0
         self._cell_cache[key] = out
         return out
 
@@ -163,6 +169,11 @@ class GeoContext:
     depth_safety_margin_m: float = 1.0
     # ~90 m — enough for chart obstacles; 0.01 nm (~19 m) was ~5× more samples.
     segment_sample_nm: float = 0.05
+    # Quantised blocked_point cache (filled lazily). Millions of segment samples
+    # on a long race otherwise re-query the same land/depth cells.
+    _blocked_point_cache: dict[tuple[int, int], bool] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     @classmethod
     def build(
@@ -183,6 +194,8 @@ class GeoContext:
         )
 
     def in_exclusion(self, pos: LatLon) -> bool:
+        if not self.exclusions:
+            return False
         pt = Point(pos[1], pos[0])
         return any(poly.covers(pt) for poly in self.exclusions)
 
@@ -192,13 +205,27 @@ class GeoContext:
         return self.depth.too_shallow(pos, self.min_depth_m + self.depth_safety_margin_m)
 
     def blocked_point(self, pos: LatLon) -> bool:
-        return self.land.on_land(pos) or self.too_shallow(pos) or self.in_exclusion(pos)
+        # ~22 m cells — fine enough for shore edges, coarse enough to collapse
+        # the millions of repeat segment samples on long isochrone races.
+        key = (int(pos[0] * 5000.0), int(pos[1] * 5000.0))
+        cache = self._blocked_point_cache
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        out = self.land.on_land(pos) or self.too_shallow(pos) or self.in_exclusion(pos)
+        cache[key] = out
+        return out
 
     def blocked_segment(self, a: LatLon, b: LatLon) -> bool:
         if self.land.segment_crosses_land(a, b):
             return True
         dist = distance_nm(a, b)
-        steps = max(2, int(dist / self.segment_sample_nm))
+        # Long chords (mark-line tests) do not need 90 m samples — 0.15 nm is
+        # still finer than chart routing and ~3× fewer depth hits.
+        step = self.segment_sample_nm if dist <= 2.0 else max(
+            self.segment_sample_nm, min(0.15, dist / 40.0)
+        )
+        steps = max(2, int(dist / step))
         for i in range(steps + 1):
             f = i / steps
             lat = a[0] + f * (b[0] - a[0])
@@ -218,11 +245,30 @@ _LARGE_COURSE_SPAN_DEG = 6.0
 _LARGE_COURSE_MARGIN_DEG = 0.5
 
 
+def _point_set(p: LatLon) -> bool:
+    """True when lat/lon is placed (client uses [0,0] as unset sentinel)."""
+    return not (p[0] == 0.0 and p[1] == 0.0)
+
+
+def _course_points(course: Course) -> list[LatLon]:
+    pts: list[LatLon] = []
+    if _point_set(course.start):
+        pts.append(course.start)
+    if _point_set(course.finish):
+        pts.append(course.finish)
+    for m in course.marks:
+        if _point_set(m.position):
+            pts.append(m.position)
+    return pts
+
+
 def effective_course_margin_deg(
     course: Course, margin_deg: float = COURSE_WIND_MARGIN_DEG
 ) -> float:
     """Pad for geo/wind bbox: full margin on compact courses, clamped on huge ones."""
-    pts = [course.start, course.finish, *[m.position for m in course.marks]]
+    pts = _course_points(course)
+    if not pts:
+        return margin_deg
     span = max(
         max(p[0] for p in pts) - min(p[0] for p in pts),
         max(p[1] for p in pts) - min(p[1] for p in pts),
@@ -234,7 +280,10 @@ def effective_course_margin_deg(
 
 def course_bbox(course: Course, margin_deg: float = COURSE_WIND_MARGIN_DEG) -> BBox:
     """Course corridor bbox. Default margin matches COURSE_WIND_MARGIN_DEG (routing + prepare)."""
-    pts = [course.start, course.finish, *[m.position for m in course.marks]]
+    pts = _course_points(course)
+    if not pts:
+        # Fallback: preserve prior shape if every point is the unset sentinel.
+        pts = [course.start, course.finish, *[m.position for m in course.marks]]
     lats = [p[0] for p in pts]
     lons = [p[1] for p in pts]
     pad = effective_course_margin_deg(course, margin_deg)
