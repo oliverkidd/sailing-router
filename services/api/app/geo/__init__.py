@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+import shapely
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon, shape
 from shapely.prepared import prep
 
@@ -47,12 +49,19 @@ def destination(origin: LatLon, brng: float, dist_nm: float) -> LatLon:
 
 
 class LandMask:
+    """Land polygons with a GEOS prepared index.
+
+    Prepared geometries are not thread-safe. ``/route`` fans models across a
+    thread pool that shares one GeoContext, so every GEOS call is serialised.
+    """
+
     def __init__(self, polygons: list[Polygon] | None = None):
         polys = polygons or []
         self._mp = MultiPolygon([p for p in polys]) if polys else MultiPolygon()
         self._prepared = prep(self._mp) if not self._mp.is_empty else None
         # ~110 m cells — enough to collapse repeated segment samples.
         self._cell_cache: dict[tuple[int, int], bool] = {}
+        self._lock = threading.RLock()
 
     @classmethod
     def from_geojson(cls, path: str | Path) -> LandMask:
@@ -96,18 +105,27 @@ class LandMask:
         if self._prepared is None:
             return False
         key = (int(pos[0] * 1000), int(pos[1] * 1000))
-        hit = self._cell_cache.get(key)
-        if hit is not None:
-            return hit
-        out = self._prepared.covers(Point(pos[1], pos[0]))
-        self._cell_cache[key] = out
-        return out
+        with self._lock:
+            hit = self._cell_cache.get(key)
+            if hit is not None:
+                return hit
+            out = self._prepared.covers(Point(pos[1], pos[0]))
+            self._cell_cache[key] = out
+            return out
 
     def segment_crosses_land(self, a: LatLon, b: LatLon) -> bool:
         if self._prepared is None:
             return False
         seg = LineString([(a[1], a[0]), (b[1], b[0])])
-        return self._prepared.intersects(seg)
+        with self._lock:
+            return self._prepared.intersects(seg)
+
+    def contains_xy(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Vectorised point-in-land (lon=x, lat=y). Thread-safe vs prepared queries."""
+        if self._prepared is None:
+            return np.zeros(np.shape(x), dtype=bool)
+        with self._lock:
+            return shapely.contains_xy(self._mp, x, y)
 
 
 @dataclass
@@ -118,6 +136,11 @@ class DepthField:
     _cell_cache: dict[tuple[int, int], float] = field(
         default_factory=dict, repr=False, compare=False
     )
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
+
+    def thread_clone(self) -> DepthField:
+        """Share raster arrays; private cell cache for a worker thread."""
+        return DepthField(self.lats, self.lons, self.depth_m)
 
     def depth(self, pos: LatLon) -> float:
         """Conservative depth (m, positive-down) at pos.
@@ -141,20 +164,21 @@ class DepthField:
         elif j > lons.size - 2:
             j = lons.size - 2
         key = (i, j)
-        hit = self._cell_cache.get(key)
-        if hit is not None:
-            return hit
-        d = self.depth_m
-        cells = (d[i, j], d[i, j + 1], d[i + 1, j], d[i + 1, j + 1])
-        out = 1e9
-        for v in cells:
-            fv = 0.0 if not np.isfinite(v) or v < 0 else float(v)
-            if fv < out:
-                out = fv
-        if out > 1e8:
-            out = 0.0
-        self._cell_cache[key] = out
-        return out
+        with self._lock:
+            hit = self._cell_cache.get(key)
+            if hit is not None:
+                return hit
+            d = self.depth_m
+            cells = (d[i, j], d[i, j + 1], d[i + 1, j], d[i + 1, j + 1])
+            out = 1e9
+            for v in cells:
+                fv = 0.0 if not np.isfinite(v) or v < 0 else float(v)
+                if fv < out:
+                    out = fv
+            if out > 1e8:
+                out = 0.0
+            self._cell_cache[key] = out
+            return out
 
     def too_shallow(self, pos: LatLon, min_depth_m: float) -> bool:
         return self.depth(pos) < min_depth_m
@@ -174,6 +198,7 @@ class GeoContext:
     _blocked_point_cache: dict[tuple[int, int], bool] = field(
         default_factory=dict, repr=False, compare=False
     )
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     @classmethod
     def build(
@@ -193,6 +218,17 @@ class GeoContext:
             depth_safety_margin_m=depth_safety_margin_m,
         )
 
+    def thread_clone(self) -> GeoContext:
+        """Per-model worker copy: shared land (locked), private depth/point caches."""
+        return GeoContext(
+            land=self.land,
+            depth=self.depth.thread_clone() if self.depth is not None else None,
+            exclusions=self.exclusions,
+            min_depth_m=self.min_depth_m,
+            depth_safety_margin_m=self.depth_safety_margin_m,
+            segment_sample_nm=self.segment_sample_nm,
+        )
+
     def in_exclusion(self, pos: LatLon) -> bool:
         if not self.exclusions:
             return False
@@ -208,13 +244,13 @@ class GeoContext:
         # ~22 m cells — fine enough for shore edges, coarse enough to collapse
         # the millions of repeat segment samples on long isochrone races.
         key = (int(pos[0] * 5000.0), int(pos[1] * 5000.0))
-        cache = self._blocked_point_cache
-        hit = cache.get(key)
-        if hit is not None:
-            return hit
-        out = self.land.on_land(pos) or self.too_shallow(pos) or self.in_exclusion(pos)
-        cache[key] = out
-        return out
+        with self._lock:
+            hit = self._blocked_point_cache.get(key)
+            if hit is not None:
+                return hit
+            out = self.land.on_land(pos) or self.too_shallow(pos) or self.in_exclusion(pos)
+            self._blocked_point_cache[key] = out
+            return out
 
     def blocked_segment(self, a: LatLon, b: LatLon) -> bool:
         if self.land.segment_crosses_land(a, b):

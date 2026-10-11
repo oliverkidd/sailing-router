@@ -274,18 +274,25 @@ def ensure_wind_window(
     start: datetime,
     end: datetime,
     pad_region: bool = True,
+    enable_terrain: bool = True,
 ):
     """Downscaled WindField for [start,end] — used by prepare + /route.
 
-    Returns a DownscaledWindField when a terrain library is present, else the
-    raw forcing WindField. Both expose wind_at(lat, lon, t).
-    Raises ForecastRateLimitError; returns None if unavailable.
+    Returns a DownscaledWindField when a terrain library is present and
+    ``enable_terrain`` is True, else the raw forcing WindField. Both expose
+    wind_at(lat, lon, t). Raises ForecastRateLimitError; returns None if
+    unavailable.
 
     pad_region: pass False for course-corridor routing so get_area_field does
     not stack REGION_PAD on top of COURSE_WIND_MARGIN.
     """
     return get_provider().downscaled_field(
-        model_id, bbox, start=start, end=end, pad_region=pad_region
+        model_id,
+        bbox,
+        start=start,
+        end=end,
+        pad_region=pad_region,
+        enable_terrain=enable_terrain,
     )
 
 

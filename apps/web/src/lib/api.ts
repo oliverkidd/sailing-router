@@ -22,6 +22,7 @@ export interface BoatResponse {
 export interface CoursePrepareRequest {
   course: Course;
   model_ids: string[];
+  terrain?: boolean;
 }
 
 export interface CoursePrepareResponse {

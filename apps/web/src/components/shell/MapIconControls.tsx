@@ -117,8 +117,8 @@ export default function MapIconControls({
             disabled={terrainDisabled}
             title={
               terrainDisabled
-                ? "Terrain stays on during routing"
-                : "Terrain: WindNinja + ~200 m grid at fetch time. Off: ~500 m, no WindNinja."
+                ? "Terrain locked"
+                : "Terrain: WindNinja + ~200 m grid (browse + routing). Off: ~500 m, raw forecast."
             }
             onClick={() => onTerrain(!terrain)}
           >

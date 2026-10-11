@@ -82,6 +82,8 @@ type WindCacheEntry = {
   loadedEndUtc: string;
   /** Display tier of the cached series (coarse/mid/fine/ultra). */
   tier: string;
+  /** Terrain toggle used when this series was fetched. */
+  terrain: boolean;
 };
 
 function courseBBox(course: Course, margin = SERIES_MARGIN_DEG): MapBounds | null {
@@ -125,6 +127,8 @@ export default function PlannerWorkspace() {
   const router = useRouter();
   const mode: "basic" | "routing" =
     pathname === "/route" || pathname?.startsWith("/route/") ? "routing" : "basic";
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   const RAIL_MIN = 320;
   const RAIL_MAX = 720;
@@ -217,12 +221,14 @@ export default function PlannerWorkspace() {
   const [showDepth, setShowDepth] = useState(true);
   const [viewport, setViewport] = useState<MapBounds | null>(null);
   const [mapZoom, setMapZoom] = useState(5);
-  /** Browse-only: WindNinja terrain downscaling (always on for routing). */
+  /** WindNinja terrain downscaling — browse overlay and /route isochrone. */
   const [windNinjaOpt, setWindNinjaOpt] = useState(false);
 
   const [activeModelId, setActiveModelId] = useState("");
   const [routeIndex, setRouteIndex] = useState(0);
   const [fitRouteKey, setFitRouteKey] = useState("");
+  /** Frame the route once per course session when entering route mode; mode toggles keep the camera. */
+  const framedRouteKeyRef = useRef<string | null>(null);
   const [prepState, setPrepState] = useState<
     "idle" | "preparing" | "ready" | "error" | "warning"
   >("idle");
@@ -252,7 +258,7 @@ export default function PlannerWorkspace() {
   // Drop other models' wind grids when switching tab — tiles stay on disk.
   // Skip in route review so tab flips don't touch browse cache.
   useEffect(() => {
-    if (routes.length > 0) return;
+    if (mode === "routing" && routes.length > 0) return;
     setBrowseCache((prev) => {
       if (!activeModelId) return {};
       const keep = prev[activeModelId];
@@ -260,7 +266,7 @@ export default function PlannerWorkspace() {
       if (Object.keys(prev).length === 1 && prev[activeModelId]) return prev;
       return { [activeModelId]: keep };
     });
-  }, [activeModelId, routes.length]);
+  }, [activeModelId, mode, routes.length]);
 
   const horizonEndUtc = useMemo(
     () => hoursAheadIso(horizonStartUtc, SCRUB_HORIZON_H),
@@ -269,19 +275,22 @@ export default function PlannerWorkspace() {
 
   const activeRouteIndex = routes.findIndex((r) => r.model_id === activeModelId);
   const displayRouteIndex = activeRouteIndex >= 0 ? activeRouteIndex : routeIndex;
-  const activeRoute = routes[displayRouteIndex];
+  const activeRoute = mode === "routing" ? routes[displayRouteIndex] : undefined;
+  // Home always uses viewport browse wind. Route review uses the course-window
+  // cache; route setup (no result yet) still browses like home.
   const windSeries =
-    (activeModelId && routeCache[activeModelId]) ||
-    (routes.length === 0 && activeModelId && browseCache[activeModelId]?.series) ||
-    null;
+    mode === "routing" && routes.length > 0
+      ? (activeModelId && routeCache[activeModelId]) || null
+      : (activeModelId && browseCache[activeModelId]?.series) || null;
 
   const scrubHourUtc = floorHourIso(overlayTimeUtc);
   const activeStatus = activeModelId ? overlayStatus[activeModelId] : undefined;
+  const inRouteReview = mode === "routing" && routes.length > 0;
   const mapMode: "browse" | "routeReview" =
-    routes.length > 0 || routeModal === "running" || routeModal === "error"
+    mode === "routing" &&
+    (routes.length > 0 || routeModal === "running" || routeModal === "error")
       ? "routeReview"
       : "browse";
-  const inRouteReview = routes.length > 0;
   const hourUncovered =
     mapMode === "browse" &&
     !!activeModelId &&
@@ -380,7 +389,9 @@ export default function PlannerWorkspace() {
       depart: nextCourse.depart_utc,
     });
     const session = loadStoredRouteSession();
-    if (session && session.courseKey === key && session.routes.length > 0) {
+    const hasRoutes =
+      !!(session && session.courseKey === key && session.routes.length > 0);
+    if (hasRoutes && session) {
       setRoutes(session.routes);
       setRouteWarnings(session.warnings ?? []);
       setActiveModelId(session.ui.activeModelId || session.routes[0].model_id);
@@ -389,9 +400,7 @@ export default function PlannerWorkspace() {
       setHorizonStartUtc(session.ui.horizonStartUtc || nextCourse.depart_utc);
       setPrepState("ready");
       skipNextRouteClear.current = true;
-      if (typeof window !== "undefined" && window.location.pathname === "/") {
-        router.replace("/route");
-      }
+      // Stay on whatever path the user opened — do not force /route.
     } else {
       setOverlayTimeUtc(now);
       setHorizonStartUtc(now);
@@ -405,10 +414,16 @@ export default function PlannerWorkspace() {
       isPointSet(nextCourse.start) ||
       isPointSet(nextCourse.finish) ||
       nextCourse.marks.some((m) => isPointSet(m.position));
-    const hasRoutes =
-      !!(session && session.courseKey === key && session.routes.length > 0);
-    if (hasCoursePts || hasRoutes) {
-      // Frame the restored course/route instead of the default wide sea view.
+    const onRouting =
+      typeof window !== "undefined" &&
+      (window.location.pathname === "/route" ||
+        window.location.pathname.startsWith("/route/"));
+    // Cold-start framing only. Route-mode recenter for saved routes is handled
+    // once when entering routing; home keeps a course-only frame if needed.
+    if (hasRoutes && onRouting) {
+      framedRouteKeyRef.current = key;
+      setFitRouteKey(`load-${Date.now()}`);
+    } else if (hasCoursePts && !hasRoutes) {
       setFitRouteKey(`load-${Date.now()}`);
     }
   }, []);
@@ -425,8 +440,11 @@ export default function PlannerWorkspace() {
   }, [course, courseReadyToPersist]);
 
   const mapBootBounds = useMemo(
-    () => (sessionHydrated ? boundsFromCourseAndRoutes(course, routes) : null),
-    [sessionHydrated, course, routes],
+    () =>
+      sessionHydrated
+        ? boundsFromCourseAndRoutes(course, mode === "routing" ? routes : [])
+        : null,
+    [sessionHydrated, course, routes, mode],
   );
 
   const courseRouteKey = useMemo(
@@ -449,12 +467,22 @@ export default function PlannerWorkspace() {
     clearStoredRouteSession();
     setRouteCache({});
     setRoutes([]);
+    framedRouteKeyRef.current = null;
     setPrepState("idle");
     setRunMsg("");
     setRouteSteps([]);
     setRouteWarnings([]);
     setRouteModal("hidden");
   }, [courseRouteKey, sessionHydrated]);
+
+  // First entry into route mode with a stored/computed route: frame once.
+  // Later home ↔ route toggles keep the same camera.
+  useEffect(() => {
+    if (!sessionHydrated || mode !== "routing" || routes.length === 0) return;
+    if (framedRouteKeyRef.current === courseRouteKey) return;
+    framedRouteKeyRef.current = courseRouteKey;
+    setFitRouteKey(`frame-${Date.now()}`);
+  }, [sessionHydrated, mode, routes.length, courseRouteKey]);
 
   useEffect(() => {
     if (!sessionHydrated || routes.length === 0) return;
@@ -522,17 +550,21 @@ export default function PlannerWorkspace() {
             const seriesTier = series.zoom_tier ?? tierForZoom(z);
             setBrowseCache((prev) => {
               const existing = prev[modelId];
+              const sameTerrain = existing?.terrain === useTerrain;
               const merged =
-                merge && existing ? mergeSeries(existing.series, series) : series;
+                merge && existing && sameTerrain
+                  ? mergeSeries(existing.series, series)
+                  : series;
               const last = merged.times[merged.times.length - 1] ?? hour;
               // Cache region = returned series bbox (what we can render).
               const cacheRegion = merged.bbox ?? series.bbox ?? reqBounds;
               return {
                 [modelId]: {
                   series: merged,
-                  region: merge && existing ? existing.region : cacheRegion,
+                  region: merge && existing && sameTerrain ? existing.region : cacheRegion,
                   loadedEndUtc: last,
-                  tier: merge && existing ? existing.tier : seriesTier,
+                  tier: merge && existing && sameTerrain ? existing.tier : seriesTier,
+                  terrain: useTerrain,
                 },
               };
             });
@@ -603,13 +635,14 @@ export default function PlannerWorkspace() {
           const seriesTier = series.zoom_tier ?? tierForZoom(z);
           setBrowseCache((prev) => {
             const existing = prev[modelId];
-            if (!existing) {
+            if (!existing || existing.terrain !== useTerrain) {
               return {
                 [modelId]: {
                   series,
                   region: series.bbox ?? reqBounds,
                   loadedEndUtc: series.times[series.times.length - 1] ?? gap.end,
                   tier: seriesTier,
+                  terrain: useTerrain,
                 },
               };
             }
@@ -620,6 +653,7 @@ export default function PlannerWorkspace() {
                 region: existing.region,
                 loadedEndUtc: merged.times[merged.times.length - 1] ?? existing.loadedEndUtc,
                 tier: existing.tier,
+                terrain: useTerrain,
               },
             };
           });
@@ -650,10 +684,16 @@ export default function PlannerWorkspace() {
       const entry = browseCacheRef.current[modelId];
       const useTerrain = terrain ?? windNinjaOpt;
       const z = zoom ?? browseFetchZoom(useTerrain);
-      const inRegion = !!(entry && bboxContains(entry.region, viewportBounds, 0.05));
+      const terrainOk = entry?.terrain === useTerrain;
+      const inRegion = !!(
+        entry &&
+        terrainOk &&
+        bboxContains(entry.region, viewportBounds, 0.05)
+      );
       const merge = inRegion && !opts?.forceReplace;
       // First fetch already covers focus..(focus+PREFETCH_WINDOW_H-1).
-      const needFocus = !merge || !entry || !seriesCoversHour(entry.series, focus);
+      const needFocus =
+        !merge || !entry || !terrainOk || !seriesCoversHour(entry.series, focus);
 
       const kickPrefetch = () => {
         // Extend beyond the initial window when scrubbing forward.
@@ -689,29 +729,46 @@ export default function PlannerWorkspace() {
   const applyTerrain = useCallback(
     (on: boolean) => {
       setWindNinjaOpt(on);
-      if (inRouteReview) return;
-      if (activeModelId) {
-        browseAbortRefs.current.get(activeModelId)?.abort();
-        prefetchAbortRefs.current.get(activeModelId)?.abort();
-        prefetchKeyRef.current.delete(activeModelId);
-        const next = { ...browseCacheRef.current };
-        delete next[activeModelId];
-        browseCacheRef.current = next;
-        setBrowseCache(next);
-        setStatus(activeModelId, "fetching");
-      } else {
-        browseCacheRef.current = {};
-        setBrowseCache({});
+      // Route-review heatmaps + any browse cache must not keep the other mode.
+      setRouteCache({});
+      browseAbortRefs.current.forEach((ac) => ac.abort());
+      prefetchAbortRefs.current.forEach((ac) => ac.abort());
+      browseAbortRefs.current.clear();
+      prefetchAbortRefs.current.clear();
+      prefetchKeyRef.current.clear();
+      browseCacheRef.current = {};
+      setBrowseCache({});
+
+      if (mapMode === "routeReview") {
+        // Isochrone already sailed; overlay refetch waits until Edit/rerun.
+        return;
       }
+      if (!activeModelId || !viewport || apiUp !== true) return;
+      setStatus(activeModelId, "fetching");
+      scheduleBrowseWindow(
+        activeModelId,
+        viewport,
+        overlayTimeUtc,
+        horizonEndUtc,
+        { forceReplace: true },
+        browseFetchZoom(on),
+        on,
+      );
     },
     [
-      inRouteReview,
+      mapMode,
       activeModelId,
+      viewport,
+      apiUp,
+      overlayTimeUtc,
+      horizonEndUtc,
+      scheduleBrowseWindow,
       setStatus,
     ],
   );
 
   // Load route-window series into routeCache per route model (silent; no overlay).
+  // Match the Terrain toggle used when the isochrone was sailed.
   useEffect(() => {
     if (routes.length === 0 || !courseIsReady(course) || apiUp !== true) return;
 
@@ -727,8 +784,9 @@ export default function PlannerWorkspace() {
       routeAbortRefs.current.set(modelId, ac);
       const { start, end } = routeTimeWindow(route, course.depart_utc);
       // Do not set overlayStatus fetching — would flash wind load modal in review.
+      const z = browseFetchZoom(windNinjaOpt);
 
-      fetchWindArea(bbox, modelId, start, end, ac.signal, undefined, undefined, true)
+      fetchWindArea(bbox, modelId, start, end, ac.signal, z, windNinjaOpt, true)
         .then(({ series, error }) => {
           if (ac.signal.aborted) return;
           if (series) {
@@ -750,11 +808,12 @@ export default function PlannerWorkspace() {
     };
     // Intentionally omit routeCache from deps — we gate on miss inside the loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routes, courseRouteKey, course, apiUp, setStatus]);
+  }, [routes, courseRouteKey, course, apiUp, setStatus, windNinjaOpt]);
 
   // Browse: only the active model — wind series stay small in RAM; chart tiles are on disk.
+  // Home always browses. Route mode skips only while a route result owns the overlay.
   useEffect(() => {
-    if (routes.length > 0 || routeModal !== "hidden") return;
+    if (mapMode === "routeReview") return;
     if (!viewport || apiUp !== true) return;
     if (!activeModelId || !selected.has(activeModelId)) return;
 
@@ -763,20 +822,25 @@ export default function PlannerWorkspace() {
       const focus = floorHourIso(overlayTimeUtc);
       const entry = browseCacheRef.current[id];
       const fetchZoom = browseFetchZoom(windNinjaOpt);
-      const inRegion = !!(entry && bboxContains(entry.region, viewport, 0.05));
+      const terrainOk = entry?.terrain === windNinjaOpt;
+      const inRegion = !!(
+        entry &&
+        terrainOk &&
+        bboxContains(entry.region, viewport, 0.05)
+      );
       const covers = !!(entry && seriesCoversHour(entry.series, focus));
       const skipFetch = inRegion && covers;
       if (skipFetch) {
         const aheadEnd = capHour(hoursAheadIso(focus, PREFETCH_WINDOW_H - 1), horizonEndUtc);
         const prefetchStart = hoursAheadIso(focus, 1);
         if (new Date(prefetchStart).getTime() <= new Date(aheadEnd).getTime()) {
-          prefetchBrowseRange(id, viewport, prefetchStart, aheadEnd, fetchZoom);
+          prefetchBrowseRange(id, viewport, prefetchStart, aheadEnd, fetchZoom, windNinjaOpt);
         }
         return;
       }
       scheduleBrowseWindow(id, viewport, focus, horizonEndUtc, {
-        forceReplace: !inRegion,
-      }, fetchZoom);
+        forceReplace: !inRegion || !terrainOk,
+      }, fetchZoom, windNinjaOpt);
     }, 250);
 
     return () => clearTimeout(t);
@@ -787,8 +851,7 @@ export default function PlannerWorkspace() {
     selected,
     activeModelId,
     apiUp,
-    routes.length,
-    routeModal,
+    mapMode,
     overlayTimeUtc,
     horizonEndUtc,
     scheduleBrowseWindow,
@@ -797,10 +860,10 @@ export default function PlannerWorkspace() {
 
   // Penultimate of contiguous run → prefetch next PREFETCH_WINDOW_H hours after runMax.
   useEffect(() => {
-    if (routes.length > 0 || routeModal !== "hidden") return;
+    if (mapMode === "routeReview") return;
     if (!viewport || !activeModelId || apiUp !== true) return;
     const entry = browseCache[activeModelId];
-    if (!entry) return;
+    if (!entry || entry.terrain !== windNinjaOpt) return;
     const inRegion = bboxContains(entry.region, viewport, 0.05);
     if (!inRegion) return;
 
@@ -819,6 +882,7 @@ export default function PlannerWorkspace() {
       extendStart,
       extendEnd,
       browseFetchZoom(windNinjaOpt),
+      windNinjaOpt,
     );
   }, [
     overlayTimeUtc,
@@ -827,8 +891,7 @@ export default function PlannerWorkspace() {
     windNinjaOpt,
     activeModelId,
     apiUp,
-    routes.length,
-    routeModal,
+    mapMode,
     horizonEndUtc,
     prefetchBrowseRange,
   ]);
@@ -952,7 +1015,7 @@ export default function PlannerWorkspace() {
     } else {
       next.add(id);
       setActiveModelId(id);
-      if (viewport && apiUp === true && routes.length === 0) {
+      if (viewport && apiUp === true && mapMode === "browse") {
         scheduleBrowseWindow(id, viewport, overlayTimeUtc, horizonEndUtc, {
           forceReplace: true,
         });
@@ -968,6 +1031,7 @@ export default function PlannerWorkspace() {
     setRunMsg("");
     setPrepState("idle");
     setRoutes([]);
+    framedRouteKeyRef.current = null;
     setRouteCache({});
     setRetryableModelIds([]);
     pendingRoutesRef.current = [];
@@ -983,8 +1047,14 @@ export default function PlannerWorkspace() {
     setOverlayTimeUtc(courseForRunRef.current.depart_utc);
     setHorizonStartUtc(courseForRunRef.current.depart_utc);
     setShowWind(true);
-    // Fit only if the full route is not already in view (handled in MapView).
-    setFitRouteKey(`${Date.now()}-${okRoutes.length}`);
+    // Frame in route mode only. If the user is on home, defer until they open
+    // the planner so home ↔ route toggles do not yank the camera.
+    if (modeRef.current === "routing") {
+      framedRouteKeyRef.current = courseRouteKey;
+      setFitRouteKey(`${Date.now()}-${okRoutes.length}`);
+    } else {
+      framedRouteKeyRef.current = null;
+    }
     pinChartCache().catch(() => {
       /* The route is already in localStorage if the chart cache is unavailable. */
     });
@@ -1067,6 +1137,7 @@ export default function PlannerWorkspace() {
           model_ids: modelIds,
           time_step_s: 300,
           heading_step_deg: 7.5,
+          terrain: windNinjaOpt,
         },
         (event) => {
           if (event.type === "stage" && event.status === "start") {
@@ -1182,6 +1253,7 @@ export default function PlannerWorkspace() {
           model_ids: [modelId],
           time_step_s: 300,
           heading_step_deg: 7.5,
+          terrain: windNinjaOpt,
         },
         (event) => {
           if (event.type === "stage" && event.status === "start") {
@@ -1295,9 +1367,9 @@ export default function PlannerWorkspace() {
     !!activeModelId && overlayStatus[activeModelId] === "error" ? overlayMsg : null;
 
   const phase: "setup" | "running" | "review" =
-    routes.length > 0
+    mode === "routing" && routes.length > 0
       ? "review"
-      : routeModal === "running" || routeModal === "error"
+      : mode === "routing" && (routeModal === "running" || routeModal === "error")
         ? "running"
         : "setup";
 
@@ -1325,9 +1397,7 @@ export default function PlannerWorkspace() {
   };
 
   const goHome = () => {
-    if (routes.length > 0 || routeModal !== "hidden") {
-      exitRouting();
-    }
+    // Keep any computed route — only leave the routing chrome. Camera stays put.
     router.push("/");
   };
 
@@ -1633,10 +1703,10 @@ export default function PlannerWorkspace() {
         {sessionHydrated && (
           <MapView
             routes={mode === "routing" ? routes : []}
-            course={course}
+            course={mode === "routing" ? course : null}
             showWind={showWind}
             showDepth={showDepth}
-            windTimeUtc={routes.length > 0 && mode === "routing" ? scrubHourUtc : overlayTimeUtc}
+            windTimeUtc={inRouteReview ? scrubHourUtc : overlayTimeUtc}
             windSeries={windSeries}
             playbackPosition={mode === "routing" ? playbackPosition : null}
             playbackHeading={mode === "routing" ? playbackHeading : null}
@@ -1705,11 +1775,9 @@ export default function PlannerWorkspace() {
                   setOverlayTimeUtc(t);
                 }}
                 horizonStartUtc={horizonStartUtc}
-                horizonEndUtc={
-                  mode === "routing" && inRouteReview ? routeHorizonEndUtc : horizonEndUtc
-                }
-                loading={windLoading && !(mode === "routing" && inRouteReview)}
-                routeActive={mode === "routing" && inRouteReview}
+                horizonEndUtc={inRouteReview ? routeHorizonEndUtc : horizonEndUtc}
+                loading={windLoading && !inRouteReview}
+                routeActive={inRouteReview}
                 playUntilUtc={activeRoute?.eta_utc ?? null}
                 legs={activeRoute?.legs ?? null}
                 distanceNm={playbackDistanceNm}
@@ -1747,7 +1815,7 @@ export default function PlannerWorkspace() {
             <MapIconControls
               toggles={{ showWind, showDepth }}
               terrain={windNinjaOpt}
-              terrainDisabled={mode === "routing" && inRouteReview}
+              terrainDisabled={false}
               onTerrain={applyTerrain}
               gpsOn={live}
               onGpsChange={(on) => {

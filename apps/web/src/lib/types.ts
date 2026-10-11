@@ -57,6 +57,8 @@ export interface RouteRequest {
   time_step_s: number;
   heading_step_deg: number;
   router_params?: RouterParamsOverride | null;
+  /** WindNinja terrain downscaling for the isochrone (map Terrain toggle). */
+  terrain?: boolean;
 }
 
 export type TuningGroup = "router" | "boat" | "course" | "request";

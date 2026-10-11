@@ -1,7 +1,4 @@
-"use client";
-
-import PlannerWorkspace from "@/components/shell/PlannerWorkspace";
-
+/** Route planner — UI lives in the planner layout. */
 export default function RoutingPlannerPage() {
-  return <PlannerWorkspace />;
+  return null;
 }

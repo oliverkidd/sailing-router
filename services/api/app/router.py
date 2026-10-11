@@ -2793,20 +2793,27 @@ class IsochroneRouter:
 
             # A few hundredths of a mile outside the circle is already the finish.
             # Tacking to clip the exact radius records a tack of a boat-length.
-            arrivals = [
+            # Only keep arrivals whose snap-to-pin chord is sailable (or that
+            # already fetch the circle) — teleporting across a no-go to the pin
+            # drew unsailable map legs while the table still showed TWA 52°.
+            in_circle = [
                 n
                 for n in frontier
                 if distance_nm(n.pos, tgt) <= target.radius_nm + 0.03
             ]
-            arrivals.extend(crossed)
+            in_circle.extend(crossed)
+            arrivals = [n for n in in_circle if self._can_snap_to_mark(n, target)]
             # Near-mark stall: false depth holes (Fastnet Rock, Genoa breakwater)
-            # leave rem stuck at 1–2 nm. After real stalling, accept the closest
-            # boat inside half a mile rather than dying.
+            # leave rem stuck at 1–2 nm. Prefer a sailable snap to the pin; only
+            # fall back to "round here" for intermediate marks, never the finish.
             if not arrivals and stalled >= max(15, stall_limit // 4):
                 close = [
                     n for n in frontier if distance_nm(n.pos, tgt) <= max(0.5, target.radius_nm + 0.25)
                 ]
-                if close:
+                snappable = [n for n in close if self._can_snap_to_mark(n, target)]
+                if snappable:
+                    arrivals = snappable
+                elif (target.name or "") != "finish":
                     arrivals = close
             if arrivals:
                 best = min(arrivals, key=lambda n: n.t)
@@ -2922,40 +2929,94 @@ class IsochroneRouter:
             )
         return arrival, exhausted, frontier
 
-    @staticmethod
-    def _snap_to_mark(node: Node, target: Mark) -> Node:
-        mark_lat, mark_lon = target.position
-        # Preserve sailing heading; parent=arrival so the approach stays in the chain.
-        brg = (
-            node.heading
-            if node.heading is not None
-            else (
-                bearing(node.parent.pos, target.position)
-                if node.parent is not None
-                else 0.0
+    def _can_snap_to_mark(self, node: Node, target: Mark) -> bool:
+        """True when the rhumb from ``node`` to the pin is a real sailed chord.
+
+        Fetching the *circle* is not enough — the map draws the pin, and a
+        teleport from the circle edge through the no-go was the M3 artifact.
+        """
+        dist = distance_nm(node.pos, target.position)
+        if dist <= 0.05:
+            return True
+        brg = bearing(node.pos, target.position)
+        if self.boat.bsp(node.tws, twa_from(brg, node.twd)) <= 0.05:
+            return False
+        return not self.geo.blocked_segment(node.pos, target.position)
+
+    def _snap_to_mark(self, node: Node, target: Mark) -> Node:
+        """Attach a mark node at the pin on a sailable chord, with real transit time.
+
+        If the chord is not sailable (stall fallback only), round at ``node`` —
+        never invent a no-go map leg that disagrees with the table TWA.
+        """
+        mark = target.position
+        dist = distance_nm(node.pos, mark)
+        if dist < 1e-4:
+            parent = node.parent if node.parent is not None else node
+            return Node(
+                lat=mark[0],
+                lon=mark[1],
+                t=node.t,
+                parent=parent,
+                heading=node.heading if node.heading is not None else 0.0,
+                bsp=node.bsp,
+                tws=node.tws,
+                twd=node.twd,
+                twa=node.twa,
+                sog=node.sog,
+                cog=node.cog if node.heading is not None else 0.0,
+                maneuver="mark",
+                n_maneuvers=node.n_maneuvers,
+                depth_m=node.depth_m,
+                hazard_cost=0.0,
+                rethink=True,
+                guide_idx=node.guide_idx,
             )
-        )
-        # If arrival is already essentially on the mark, skip duplicate node.
-        parent = node
-        if distance_nm(node.pos, target.position) < 1e-4 and node.parent is not None:
-            parent = node.parent
+
+        chord = bearing(node.pos, mark)
+        chord_twa = twa_from(chord, node.twd)
+        chord_bsp = self.boat.bsp(node.tws, chord_twa)
+        if chord_bsp > 0.05 and not self.geo.blocked_segment(node.pos, mark):
+            dt = (dist / chord_bsp) * 3600.0
+            return Node(
+                lat=mark[0],
+                lon=mark[1],
+                t=node.t + timedelta(seconds=dt),
+                parent=node,
+                heading=chord,
+                bsp=chord_bsp,
+                tws=node.tws,
+                twd=node.twd,
+                twa=chord_twa,
+                sog=chord_bsp,
+                cog=chord,
+                maneuver="mark",
+                n_maneuvers=node.n_maneuvers,
+                depth_m=node.depth_m,
+                hazard_cost=0.0,
+                rethink=True,
+                guide_idx=node.guide_idx,
+            )
+
+        # Stall fallback: round where we are — never draw a no-go to the pin.
         return Node(
-            lat=mark_lat,
-            lon=mark_lon,
+            lat=node.lat,
+            lon=node.lon,
             t=node.t,
-            parent=parent,
-            heading=brg,
+            parent=node.parent if node.parent is not None else node,
+            heading=node.heading if node.heading is not None else 0.0,
             bsp=node.bsp,
             tws=node.tws,
             twd=node.twd,
             twa=node.twa,
             sog=node.sog,
-            cog=brg,
+            cog=node.cog,
             maneuver="mark",
             n_maneuvers=node.n_maneuvers,
             depth_m=node.depth_m,
             hazard_cost=0.0,
-            rethink=True,  # next leg must re-seed from the new mark bearing
+            rethink=True,
+            guide_idx=node.guide_idx,
         )
 
     def route(self, course: Course, model_id: str, *, resume: bool = False) -> ModelRoute:

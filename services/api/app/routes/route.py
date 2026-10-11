@@ -102,6 +102,7 @@ def _run_route(
         return RouteResponse(routes=[], warnings=warnings)
 
     params = build_router_params(req)
+    use_terrain = bool(req.terrain)
 
     # Short upfront window; +3h extend covers longer courses without a 45s cold fetch.
     horizon_h = initial_route_horizon_h(req.course)
@@ -123,7 +124,12 @@ def _run_route(
             )
             t_wind = time.perf_counter()
             wind = ensure_wind_window(
-                model_id, bbox, start=depart, end=end, pad_region=False
+                model_id,
+                bbox,
+                start=depart,
+                end=end,
+                pad_region=False,
+                enable_terrain=use_terrain,
             )
             wind_ms = (time.perf_counter() - t_wind) * 1000
             logger.info("route %s wind initial %.0fms horizon=%dh", model_id, wind_ms, horizon_h)
@@ -158,10 +164,11 @@ def _run_route(
             }
         )
         t_prep = time.perf_counter()
+        # Each model worker needs its own caches; land GEOS is shared+locked.
         engine = IsochroneRouter(
             boat=boat,
             wind=wind,
-            geo=geo,
+            geo=geo.thread_clone(),
             params=params,
             on_progress=on_progress,
             model_id=model_id,
@@ -223,10 +230,20 @@ def _run_route(
             try:
                 t_ext = time.perf_counter()
                 ensure_wind_window(
-                    model_id, bbox, start=t_last, end=t_ext_end, pad_region=False
+                    model_id,
+                    bbox,
+                    start=t_last,
+                    end=t_ext_end,
+                    pad_region=False,
+                    enable_terrain=use_terrain,
                 )
                 wind = ensure_wind_window(
-                    model_id, bbox, start=depart, end=t_ext_end, pad_region=False
+                    model_id,
+                    bbox,
+                    start=depart,
+                    end=t_ext_end,
+                    pad_region=False,
+                    enable_terrain=use_terrain,
                 )
                 ext_ms = (time.perf_counter() - t_ext) * 1000
                 logger.info(

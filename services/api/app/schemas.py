@@ -141,6 +141,8 @@ class RouteRequest(BaseModel):
     time_step_s: int = 300
     heading_step_deg: float = 7.5
     router_params: RouterParamsOverride | None = None
+    # Match map Terrain toggle: WindNinja downscaling for the whole isochrone.
+    terrain: bool = True
 
 
 class TuningField(BaseModel):

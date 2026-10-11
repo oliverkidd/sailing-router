@@ -237,7 +237,7 @@ def _corridor_grid(
     navigable = np.isfinite(d) & (d >= threshold)
     lon_mesh, lat_mesh = np.meshgrid(lons, lats)
     if not geo.land.is_empty:
-        navigable &= ~shapely.contains_xy(geo.land.geometry, lon_mesh, lat_mesh)
+        navigable &= ~geo.land.contains_xy(lon_mesh, lat_mesh)
     for poly in geo.exclusions:
         navigable &= ~shapely.contains_xy(poly, lon_mesh, lat_mesh)
 

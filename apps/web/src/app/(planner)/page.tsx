@@ -1,7 +1,4 @@
-"use client";
-
-import PlannerWorkspace from "@/components/shell/PlannerWorkspace";
-
+/** Home / browse — UI lives in the planner layout. */
 export default function BasicPlannerPage() {
-  return <PlannerWorkspace />;
+  return null;
 }
